@@ -8,6 +8,8 @@ typedef struct hsRasterBandImpl {
   int nBlockXSize;
   int nBlockYSize;
   GDALDataType eDataType;
+  double nodata;
+  int hasNodata;
   int (*readBlock)( int, int, void* );
 }* HSRasterBandImpl;
 

@@ -64,6 +64,8 @@ public:
   virtual double GetNoDataValue( int *pbSuccess = NULL );
 
 private:
+  double noDataValue;
+  bool hasNodata;
   int (*const pfnReadBlock)(int, int, void*);
 
 };
@@ -170,6 +172,8 @@ HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
   this->nBlockXSize  = impl.nBlockXSize;
   this->nBlockYSize  = impl.nBlockYSize;
   this->eDataType    = impl.eDataType;
+  this->noDataValue  = impl.nodata;
+  this->hasNodata    = impl.hasNodata;
 }
 
 /************************************************************************/
@@ -199,8 +203,8 @@ HSRasterBand::IReadBlock( int nBlockXOff, int nBlockYOff, void *pImage )
 double HSRasterBand::GetNoDataValue( int *pbSuccess )
 {
     if ( pbSuccess )
-      *pbSuccess = TRUE;
-    return -999;
+      *pbSuccess = this->hasNodata;
+    return this->noDataValue;
 }
 
 
