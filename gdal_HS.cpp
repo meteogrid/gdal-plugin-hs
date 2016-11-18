@@ -43,7 +43,6 @@ private:
   double adfGeoTransform[6];
   char *pszProjection;
   void Initialize ( const hsDatasetImpl& );
-  int (*pfnReadBlock)(int, int, int, void*);
 };
 
 
@@ -58,13 +57,14 @@ class HSRasterBand : public GDALRasterBand
     friend class HSDataset;
 
 public:
-  HSRasterBand( HSDataset *, int, const hsDatasetImpl& );
+  HSRasterBand( HSDataset *, int, const hsRasterBandImpl& );
   virtual ~HSRasterBand();
 
   virtual CPLErr IReadBlock( int, int, void * );
   virtual double GetNoDataValue( int *pbSuccess = NULL );
 
 private:
+  int (*const pfnReadBlock)(int, int, void*);
 
 };
 
@@ -87,7 +87,6 @@ HSDataset::HSDataset():
 /************************************************************************/
 HSDataset::~HSDataset()
 {
-  hs_free_fun_ptr ( reinterpret_cast<HsFunPtr>( this->pfnReadBlock ) );
   CPLFree ( this->pszProjection );
 }
 
@@ -110,6 +109,7 @@ GDALDataset *HSDataset::Open( GDALOpenInfo * poOpenInfo )
     return NULL;
 
   hsDatasetImpl impl;
+  memset(&impl, 0, sizeof(hsDatasetImpl));
   if ( gdal_hs_openHook ( poOpenInfo->pszFilename, &impl ) == 0 ) {
     HSDataset *ds = new HSDataset();
     ds->Initialize( impl );
@@ -126,12 +126,11 @@ void HSDataset::Initialize( const hsDatasetImpl& impl )
   this->nRasterXSize  = impl.nRasterXSize;
   this->nRasterYSize  = impl.nRasterYSize;
   this->nBands        = impl.nBands;
-  this->pfnReadBlock  = impl.readBlock;
-  this->pszProjection = impl.pszProjection;
   memcpy( this->adfGeoTransform, impl.adfGeoTransform, sizeof(double) * 6 );
+  this->pszProjection = impl.pszProjection;
 
-  for (int i=1; i <= this->nBands; i++) {
-    this->SetBand ( i, new HSRasterBand ( this, i, impl ) );
+  for (int i=0; i < this->nBands; i++) {
+    this->SetBand ( i+1, new HSRasterBand ( this, i+1, impl.bands[i] ) );
   }
 
 }
@@ -163,13 +162,14 @@ const char *HSDataset::GetProjectionRef()
 /*                       HSRasterBand::HSRasterBand()                         */
 /************************************************************************/
 HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
-                            const hsDatasetImpl &impl )
+                            const hsRasterBandImpl &impl ):
+  pfnReadBlock ( impl.readBlock )
 {
   this->poDS = poDS;
   this->nBand = nBand;
-  this->nBlockXSize = impl.nBlockXSize;
-  this->nBlockYSize = impl.nBlockYSize;
-  this->eDataType   = impl.eDataType;
+  this->nBlockXSize  = impl.nBlockXSize;
+  this->nBlockYSize  = impl.nBlockYSize;
+  this->eDataType    = impl.eDataType;
 }
 
 /************************************************************************/
@@ -177,6 +177,7 @@ HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
 /************************************************************************/
 HSRasterBand::~HSRasterBand()
 {
+  hs_free_fun_ptr ( reinterpret_cast<HsFunPtr>( this->pfnReadBlock ) );
 }
 
 /************************************************************************/
@@ -188,7 +189,7 @@ HSRasterBand::IReadBlock( int nBlockXOff, int nBlockYOff, void *pImage )
 {
   HSDataset *ds = static_cast<HSDataset*>(this->poDS);
   return static_cast<CPLErr>(
-    ds->pfnReadBlock( this->nBand, nBlockXOff, nBlockYOff, pImage ) );
+    this->pfnReadBlock( nBlockXOff, nBlockYOff, pImage ) );
 }
 
 /************************************************************************/
@@ -215,8 +216,9 @@ double HSRasterBand::GetNoDataValue( int *pbSuccess )
 
 static void GDALHSDeregister (GDALDriver* )
 {
-  if ( gdal_hs_unloadDriverHook() == TRUE )
+  if ( gdal_hs_unloadDriverHook() == TRUE ) {
     hs_exit();
+  }
 }
 
 /************************************************************************/
@@ -233,6 +235,7 @@ void GDALRegister_HS()
 
   poDriver->SetDescription( "HS" );
   poDriver->SetMetadataItem( GDAL_DCAP_RASTER, "YES" );
+  //poDriver->SetMetadataItem( GDAL_DCAP_VECTOR, "YES" );
   poDriver->SetMetadataItem( GDAL_DMD_LONGNAME, "Haskell programs (.hs)" );
   poDriver->SetMetadataItem( GDAL_DMD_HELPTOPIC, "frmt_hs.html" );
   poDriver->SetMetadataItem( GDAL_DMD_SUBDATASETS, "YES" );
@@ -249,4 +252,21 @@ void GDALRegister_HS()
   GetGDALDriverManager()->RegisterDriver( poDriver );
 
   gdal_hs_registerDriverHook();
+}
+
+/************************************************************************/
+/*                         destroyHSDatasetImpl                         */
+/************************************************************************/
+void destroyHSDatasetImpl (HSDatasetImpl impl)
+{
+  if ( impl->bands ) {
+    for (int i=0; i<impl->nBands; i++) {
+      if ( impl->bands[i].readBlock ) {
+        hs_free_fun_ptr (
+          reinterpret_cast<HsFunPtr>( impl->bands[i].readBlock ) );
+      }
+    }
+    free ( impl->bands );
+  }
+  CPLFree ( impl->pszProjection );
 }

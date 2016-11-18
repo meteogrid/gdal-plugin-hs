@@ -22,12 +22,6 @@ stdenv.mkDerivation rec {
     ghc
   ];
 
-  buildPhase = ''
-    runHook preBuild
-    ./build.sh
-    runHook postBuild
-    '';
-
   shellHook = ''
     runHook setVariables
     runHook preShellHook
