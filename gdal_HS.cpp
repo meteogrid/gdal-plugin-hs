@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <iostream>
 #include "gdal_priv.h"
 #include "gdal_frmts.h"
 #include "gdal_HS.h"
@@ -42,6 +43,8 @@ public:
 private:
   double adfGeoTransform[6];
   char *pszProjection;
+  HsStablePtr state;
+  void (*pfnDestroyState)( HsStablePtr );
   void Initialize ( const hsDatasetImpl& );
 };
 
@@ -64,9 +67,10 @@ public:
   virtual double GetNoDataValue( int *pbSuccess = NULL );
 
 private:
-  double noDataValue;
-  bool hasNodata;
-  int (*const pfnReadBlock)(int, int, void*);
+  const HsStablePtr state;
+  const double noDataValue;
+  const bool hasNodata;
+  int (*const pfnReadBlock)(HsStablePtr, int, int, void*);
 
 };
 
@@ -74,7 +78,9 @@ private:
 /*                       HSDataset::HSDataset()                         */
 /************************************************************************/
 HSDataset::HSDataset():
-  pszProjection(0)
+  pszProjection(0),
+  state(0),
+  pfnDestroyState(0)
 {
   adfGeoTransform[0] = 0.0;
   adfGeoTransform[1] = 1.0;
@@ -90,6 +96,12 @@ HSDataset::HSDataset():
 HSDataset::~HSDataset()
 {
   CPLFree ( this->pszProjection );
+  if ( this->pfnDestroyState && this->state ) {
+    this->pfnDestroyState ( this->state );
+  }
+  if ( this->state ) {
+    hs_free_stable_ptr ( this->state );
+  }
 }
 
 
@@ -125,14 +137,17 @@ GDALDataset *HSDataset::Open( GDALOpenInfo * poOpenInfo )
 /************************************************************************/
 void HSDataset::Initialize( const hsDatasetImpl& impl )
 {
-  this->nRasterXSize  = impl.nRasterXSize;
-  this->nRasterYSize  = impl.nRasterYSize;
-  this->nBands        = impl.nBands;
+  this->nRasterXSize    = impl.nRasterXSize;
+  this->nRasterYSize    = impl.nRasterYSize;
+  this->nBands          = impl.nBands;
+  this->state           = impl.state;
+  this->pszProjection   = impl.pszProjection;
+  this->pfnDestroyState = impl.destroyState;
   memcpy( this->adfGeoTransform, impl.adfGeoTransform, sizeof(double) * 6 );
-  this->pszProjection = impl.pszProjection;
 
   for (int i=0; i < this->nBands; i++) {
-    this->SetBand ( i+1, new HSRasterBand ( this, i+1, impl.bands[i] ) );
+    HSRasterBand *band = new HSRasterBand ( this, i+1, impl.bands[i] ) ;
+    this->SetBand ( i+1, band );
   }
 
 }
@@ -165,19 +180,20 @@ const char *HSDataset::GetProjectionRef()
 /************************************************************************/
 HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
                             const hsRasterBandImpl &impl ):
-  pfnReadBlock ( impl.readBlock )
+  pfnReadBlock ( impl.readBlock ),
+  state ( poDS->state ),
+  noDataValue ( impl.nodata ),
+  hasNodata ( impl.hasNodata )
 {
   this->poDS = poDS;
   this->nBand = nBand;
   this->nBlockXSize  = impl.nBlockXSize;
   this->nBlockYSize  = impl.nBlockYSize;
   this->eDataType    = impl.eDataType;
-  this->noDataValue  = impl.nodata;
-  this->hasNodata    = impl.hasNodata;
 }
 
 /************************************************************************/
-/*                       HSDataset::~HSDataset()                         */
+/*                       HSDataset::~HSDataset()                        */
 /************************************************************************/
 HSRasterBand::~HSRasterBand()
 {
@@ -191,9 +207,10 @@ HSRasterBand::~HSRasterBand()
 CPLErr
 HSRasterBand::IReadBlock( int nBlockXOff, int nBlockYOff, void *pImage )
 {
+  std::cerr << nBlockXOff << "," << nBlockYOff << std::endl;
   HSDataset *ds = static_cast<HSDataset*>(this->poDS);
   return static_cast<CPLErr>(
-    this->pfnReadBlock( nBlockXOff, nBlockYOff, pImage ) );
+    this->pfnReadBlock( this->state, nBlockXOff, nBlockYOff, pImage ) );
 }
 
 /************************************************************************/
@@ -260,6 +277,10 @@ void GDALRegister_HS()
 
 /************************************************************************/
 /*                         destroyHSDatasetImpl                         */
+/*                                                                      */
+/* For use in cleanup after haskell exception. Does not free the ptr    */
+/* itself. Obviously, the pointer struct members must not be used after */
+/* calling this.                                                        */
 /************************************************************************/
 void destroyHSDatasetImpl (HSDatasetImpl impl)
 {
@@ -271,6 +292,9 @@ void destroyHSDatasetImpl (HSDatasetImpl impl)
       }
     }
     free ( impl->bands );
+  }
+  if ( impl->state ) {
+    hs_free_stable_ptr ( impl-> state );
   }
   CPLFree ( impl->pszProjection );
 }

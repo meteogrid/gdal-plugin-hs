@@ -4,13 +4,15 @@
 extern "C" {
 #endif
 
+typedef void* HsStablePtr;
+
 typedef struct hsRasterBandImpl {
   int nBlockXSize;
   int nBlockYSize;
   GDALDataType eDataType;
   double nodata;
   int hasNodata;
-  int (*readBlock)( int, int, void* );
+  int (*readBlock)( HsStablePtr, int, int, void* );
 }* HSRasterBandImpl;
 
 
@@ -21,6 +23,8 @@ typedef struct hsDatasetImpl {
   struct hsRasterBandImpl *bands;
   char *pszProjection;
   double adfGeoTransform[6];
+  HsStablePtr state;
+  void (*destroyState)( HsStablePtr );
 }* HSDatasetImpl;
 
 void destroyHSDatasetImpl (HSDatasetImpl impl);
