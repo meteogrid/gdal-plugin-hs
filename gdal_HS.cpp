@@ -207,7 +207,7 @@ HSRasterBand::~HSRasterBand()
 CPLErr
 HSRasterBand::IReadBlock( int nBlockXOff, int nBlockYOff, void *pImage )
 {
-  std::cerr << nBlockXOff << "," << nBlockYOff << std::endl;
+  //std::cerr << nBlockXOff << "," << nBlockYOff << std::endl;
   HSDataset *ds = static_cast<HSDataset*>(this->poDS);
   return static_cast<CPLErr>(
     this->pfnReadBlock( this->state, nBlockXOff, nBlockYOff, pImage ) );

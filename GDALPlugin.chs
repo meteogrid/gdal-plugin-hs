@@ -14,9 +14,10 @@ import GDAL ( GDAL, Geotransform(..), ErrorType(..), GDALException (..) )
 import GDAL ( GDALType (..), BlockIx, Pair((:+:)), Value (..), Size )
 import OSR ( SpatialReference, srsFromEPSG )
 
+import GDAL.Internal.GDAL
 import GDAL.Internal.DataType ( DataTypeK (..), hsDataType, toCDouble )
 import GDAL.Internal.OSR ( withMaybeSRAsCString )
-import GDAL.Internal.Util ( fromEnumC )
+import GDAL.Internal.Util ( fromEnumC, toEnumC )
 import GDAL.Internal.Types.Value ( toGVec, toGVecWithNodata )
 import GDAL.Internal.Types ( runWithInternalState )
 import GDAL.Internal.Types ( GDALInternalState (..) )
@@ -37,10 +38,12 @@ import Data.Maybe (fromMaybe)
 import Data.Proxy ( Proxy(Proxy) )
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
+import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C
-import Foreign.Marshal.Alloc ( free )
-import Foreign.Marshal.Array ( callocArray, pokeArray, copyArray )
+import Foreign.Marshal.Alloc ( free, callocBytes )
+import Foreign.Marshal.Array ( pokeArray, copyArray )
 import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr)
+import Foreign.ForeignPtr
 import Foreign.StablePtr ( newStablePtr, castStablePtrToPtr )
 import Foreign.StablePtr ( deRefStablePtr, castPtrToStablePtr )
 import Foreign.Storable ( Storable (..) )
@@ -66,7 +69,7 @@ type CRegisterDriverHook = IO ()
 type RegisterDriverKook = IO ()
 
 type CReadBlockHook = Ptr () -> CInt -> CInt -> Ptr () -> IO CInt
-type ReadBlockHook s a = BlockIx -> GDAL s (U.Vector (Value a))
+type ReadBlockHook s a = BlockIx -> GDAL s (St.Vector a)
 
 data HSDataset s = HSDataset
   { rasterSize   :: !Size
@@ -82,7 +85,7 @@ pokeHSDataset p HSDataset{..} = uninterruptibleMask_ $ do
   {#set HSDatasetImpl->nRasterXSize#}  p xsize
   {#set HSDatasetImpl->nRasterYSize#}  p ysize
   {#set HSDatasetImpl->nBands#}        p (fromIntegral (length bands))
-  bandsPtr <- callocArray (length bands)
+  bandsPtr <- callocBytes (length bands * {#sizeof hsRasterBandImpl#})
   -- set the pointer before poking the array so we don't lose the reference
   -- and we can cleanup in case a poke fails midway
   {#set HSDatasetImpl->bands#} p (castPtr bandsPtr)
@@ -100,48 +103,48 @@ data HSRasterBand s = forall a. (NFData a, GDALType a) =>
     , nodata    :: !(Maybe a)
     , readBlock :: !(ReadBlockHook s a)
     }
+
+hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
+
 instance NFData (HSRasterBand s) where
   rnf (HSRasterBand a b c) = rnf a `seq` rnf b  `seq` rnf c
+
+instance NFData ErrorType where
+  rnf e = e `seq` ()
 
 foreign import ccall safe "wrapper"
   c_wrapReadBlockHook :: CReadBlockHook -> IO (FunPtr CReadBlockHook)
 
 wrapReadBlockHook
-  :: forall s a. GDALType a
-  => Maybe a -> ReadBlockHook s a -> IO (FunPtr CReadBlockHook)
-wrapReadBlockHook nodata fun = c_wrapReadBlockHook readBlock
+  :: HSRasterBand s -> IO (FunPtr CReadBlockHook)
+wrapReadBlockHook b@HSRasterBand{..} = c_wrapReadBlockHook c_readBlock
   where
+    bLen = let x :+: y  = blockSize in x*y
     deRefState :: Ptr () -> IO (GDALInternalState s)
     deRefState = fmap GDALInternalState . deRefStablePtr . castPtrToStablePtr
-    toStVec = maybe toGVec ((Just . ) . toGVecWithNodata) nodata
-    readBlock :: CReadBlockHook
-    readBlock statePtr
+    c_readBlock :: CReadBlockHook
+    c_readBlock statePtr
               (fromIntegral -> i)
               (fromIntegral -> j)
-              (castPtr -> ptr) = do
-      eVec <- try . runWithInternalState (fun (i :+: j))
+              (castPtr -> destPtr) = do
+      eVec <- try . runWithInternalState (readBlock (i :+: j))
           =<< deRefState statePtr
       case eVec of
-        Right uv ->
-          case toStVec uv of
-            Just v -> St.unsafeWith v $ \p ->
-              copyArray ptr p (St.length v) >> return ok
-            Nothing -> do
-              hPutStrLn stderr ("WARN: unexpected NoData from readBlock")
-              -- Should we zero de output or something?
-              return warning
+        Right v -> St.unsafeWith v $ \srcPtr -> do
+          copyArray destPtr srcPtr bLen
+          return ok
         Left (e :: SomeException) -> do
           hPutStrLn stderr ("Unhandled exception in readBlock: " ++ show e)
           return failure
 
 pokeHSRasterBand :: Ptr (HSRasterBand s) -> HSRasterBand s -> IO ()
-pokeHSRasterBand p HSRasterBand{readBlock=(rb :: ReadBlockHook s a),..} = do
+pokeHSRasterBand p b@HSRasterBand{readBlock=(rb :: ReadBlockHook s a),..} = do
   {#set HSRasterBandImpl->nBlockXSize#} p xsize
   {#set HSRasterBandImpl->nBlockYSize#} p ysize
   {#set HSRasterBandImpl->eDataType#}   p (fromEnumC dtype)
   {#set HSRasterBandImpl->nodata#}      p (toCDouble (fromMaybe 0 nodata))
   {#set HSRasterBandImpl->hasNodata#}   p (maybe 0 (const 1) nodata)
-  fPtr <- wrapReadBlockHook nodata rb
+  fPtr <- wrapReadBlockHook b
   {#set HSRasterBandImpl->readBlock#} p fPtr
   where
     dtype = hsDataType (Proxy :: Proxy a)
@@ -186,7 +189,7 @@ gdal_hs_openHook carg impl = handleAllExceptions cleanup $ do
 
 openDataset :: GDALPath -> GDAL s (HSDataset s)
 openDataset path = do
-  dsIn <- openReadOnly (BS.unpack path) GDT_Float32
+  dsIn <- openReadOnly (BS.unpack path) GDT_Int16
   srsIn <- datasetProjection dsIn
   gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> datasetGeotransform dsIn
   bandIn <- getBand 1 dsIn
@@ -200,11 +203,22 @@ openDataset path = do
       rasterBands = [
           HSRasterBand { blockSize = bandBlockSize bandIn
                        , nodata = bandNd
-                       , readBlock = readBandBlock bandIn
+                       , readBlock = fmap (St.map (subtract 1000)) .
+                          readBandBlock' bandIn
                         }
 
         ]
   return ds
+
+readBandBlock' band ( i :+: j ) = liftIO $ do
+  mVec <- Stm.unsafeNew (bandBlockLen band)
+  Stm.unsafeWith mVec $ \pBuf ->
+    {#call unsafe GDALReadBlock as lolailos #}
+          (castPtr ((\(RasterBandH b) -> b) (unBand band)))
+          (fromIntegral i)
+          (fromIntegral j)
+          (castPtr pBuf)
+  St.unsafeFreeze mVec
 
 true = {#const TRUE #}
 false = {#const FALSE #}

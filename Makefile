@@ -6,6 +6,7 @@ GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS) -fPIC
 GHCFLAGS  = $(CFLAGS) -Wall -optc-fPIC -O2
+#GHCFLAGS += -prof -fprof-auto
 
 all: plugin
 
