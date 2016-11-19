@@ -32,6 +32,7 @@ friend class HSRasterBand;
 
 public:
   HSDataset();
+  HSDataset(const hsDatasetImpl&);
    ~HSDataset();
 
   static GDALDataset*  Open( GDALOpenInfo * );
@@ -41,7 +42,6 @@ public:
   const char*          GetProjectionRef();
 
 private:
-  HSDataset(const hsDatasetImpl&);
   const double adfGeoTransform[6];
   char *pszProjection;
   const HsStablePtr state;
@@ -121,6 +121,10 @@ HSDataset::~HSDataset()
   if ( this->state ) {
     hs_free_stable_ptr ( this->state );
   }
+  if ( this->pfnDestroyState ) {
+    hs_free_fun_ptr (
+      reinterpret_cast<HsFunPtr> ( this->pfnDestroyState ) );
+  }
 }
 
 
@@ -129,7 +133,7 @@ HSDataset::~HSDataset()
 /************************************************************************/
 int HSDataset::Identify( GDALOpenInfo * poOpenInfo )
 {
-  return gdal_hs_identifyHook ( poOpenInfo->pszFilename );
+  return hs_gdal_identifyHook ( poOpenInfo->pszFilename );
 }
 
 /************************************************************************/
@@ -138,15 +142,8 @@ int HSDataset::Identify( GDALOpenInfo * poOpenInfo )
 
 GDALDataset *HSDataset::Open( GDALOpenInfo * poOpenInfo )
 {
-  if ( !Identify( poOpenInfo ) )
-    return NULL;
-
-  hsDatasetImpl impl;
-  memset(&impl, 0, sizeof(hsDatasetImpl));
-  if ( gdal_hs_openHook ( poOpenInfo->pszFilename, &impl ) == 0 ) {
-    return new HSDataset( impl );
-  }
-  return NULL;
+  return static_cast<GDALDataset*>(
+    hs_gdal_openHook ( poOpenInfo->pszFilename ) );
 }
 
 /************************************************************************/
@@ -190,7 +187,7 @@ HSRasterBand::HSRasterBand( HSDataset *poDS, int nBand,
 }
 
 /************************************************************************/
-/*                       HSDataset::~HSDataset()                        */
+/*                       HSRasterBand::~HSRasterBand()                  */
 /************************************************************************/
 HSRasterBand::~HSRasterBand()
 {
@@ -234,7 +231,7 @@ double HSRasterBand::GetNoDataValue( int *pbSuccess )
 
 static void GDALHSDeregister (GDALDriver* )
 {
-  if ( gdal_hs_unloadDriverHook() == TRUE ) {
+  if ( hs_gdal_unloadDriverHook() == TRUE ) {
     hs_exit();
   }
 }
@@ -269,7 +266,15 @@ void GDALRegister_HS()
 #endif
   GetGDALDriverManager()->RegisterDriver( poDriver );
 
-  gdal_hs_registerDriverHook();
+  hs_gdal_registerDriverHook();
+}
+
+/************************************************************************/
+/*                         hs_gdal_create_dataset                       */
+/************************************************************************/
+GDALDatasetH hs_gdal_create_dataset ( HSDatasetImpl impl )
+{
+  return static_cast<GDALDatasetH>( new HSDataset( *impl ) );
 }
 
 /************************************************************************/
@@ -292,6 +297,9 @@ void destroyHSDatasetImpl (HSDatasetImpl impl)
   }
   if ( impl->state ) {
     hs_free_stable_ptr ( impl-> state );
+  }
+  if ( impl->destroyState ) {
+    hs_free_fun_ptr ( reinterpret_cast<HsFunPtr>( impl->destroyState ) );
   }
   CPLFree ( impl->pszProjection );
 }

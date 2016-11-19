@@ -27,6 +27,8 @@ typedef struct hsDatasetImpl {
   void (*destroyState)( HsStablePtr );
 }* HSDatasetImpl;
 
+GDALDatasetH hs_gdal_create_dataset ( HSDatasetImpl );
+
 void destroyHSDatasetImpl (HSDatasetImpl impl);
 
 #ifdef __cplusplus

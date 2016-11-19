@@ -8,6 +8,10 @@
 {-# LANGUAGE ViewPatterns #-}
 module GDALPlugin () where
 
+#include "gdal.h"
+#include "cpl_conv.h"
+#include "gdal_HS.h"
+
 import GDAL
 import GDAL.Internal.GDAL ( unBand )
 import GDAL ( GDAL, Geotransform(..), ErrorType(..), GDALException (..) )
@@ -20,18 +24,14 @@ import GDAL.Internal.OSR ( withMaybeSRAsCString )
 import GDAL.Internal.Util ( fromEnumC, toEnumC )
 import GDAL.Internal.Types.Value ( toGVec, toGVecWithNodata )
 import GDAL.Internal.Types ( runWithInternalState )
-import GDAL.Internal.Types ( GDALInternalState (..) )
-
-#include "gdal.h"
-#include "cpl_conv.h"
-#include "gdal_HS.h"
+import GDAL.Internal.Types ( GDALInternalState, getInternalState )
+import GDAL.Internal.Types ( createGDALInternalState )
+import GDAL.Internal.Types ( closeGDALInternalState )
 
 import Control.Exception ( SomeException, uninterruptibleMask_, catch, try )
 import Control.DeepSeq (NFData (..) , force)
 import Control.Monad
 import Control.Monad.IO.Class ( liftIO )
-import Control.Monad.Trans.Resource ( createInternalState )
-import Control.Monad.Trans.Resource ( closeInternalState )
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString (packCString)
 import Data.Maybe (fromMaybe)
@@ -40,9 +40,9 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
 import Foreign.C
-import Foreign.Marshal.Alloc ( free, callocBytes )
+import Foreign.Marshal.Alloc ( free, callocBytes, alloca )
 import Foreign.Marshal.Array ( pokeArray, copyArray )
-import Foreign.Ptr (Ptr, FunPtr, nullPtr, castPtr)
+import Foreign.Ptr (Ptr, FunPtr, nullPtr, nullFunPtr, castPtr)
 import Foreign.ForeignPtr
 import Foreign.StablePtr ( newStablePtr, castStablePtrToPtr )
 import Foreign.StablePtr ( deRefStablePtr, castPtrToStablePtr )
@@ -53,9 +53,10 @@ import System.IO ( stdout, stderr, hPutStrLn )
 {# pointer HSRasterBandImpl #}
 
 type GDALPath = BS.ByteString
+type GDALDatasetH = Ptr ()
 
-type COpenHook = CString -> HSDatasetImpl -> IO CInt
-type OpenHook = GDALPath -> HSDatasetImpl -> IO ErrorType
+type COpenHook = CString -> IO GDALDatasetH
+type OpenHook = GDALPath -> IO (Either ErrorType GDALDatasetH)
 
 type CIdentifyHook = CString -> IO CInt
 type IdentifyHook = GDALPath -> IO CInt
@@ -93,7 +94,6 @@ pokeHSDataset p HSDataset{..} = uninterruptibleMask_ $ do
   pSrs <- withMaybeSRAsCString srs {#call unsafe CPLStrdup as cStrdup #}
   {#set HSDatasetImpl->pszProjection#} p pSrs
   flip poke geotransform . castPtr =<< {#get HSDatasetImpl->adfGeoTransform#} p
-  {#set HSDatasetImpl->destroyState#} p gdal_hs_destroyStatePtr
   where
     xsize :+: ysize = fmap fromIntegral rasterSize
 
@@ -108,9 +108,6 @@ hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
 
 instance NFData (HSRasterBand s) where
   rnf (HSRasterBand a b c) = rnf a `seq` rnf b  `seq` rnf c
-
-instance NFData ErrorType where
-  rnf e = e `seq` ()
 
 foreign import ccall safe "wrapper"
   c_wrapReadBlockHook :: CReadBlockHook -> IO (FunPtr CReadBlockHook)
@@ -133,7 +130,7 @@ wrapReadBlockHook b@HSRasterBand{..} = c_wrapReadBlockHook c_readBlock
       return failure
 
     deRefState :: Ptr () -> IO (GDALInternalState s)
-    deRefState = fmap GDALInternalState . deRefStablePtr . castPtrToStablePtr
+    deRefState = deRefStablePtr . castPtrToStablePtr
 
     bLen = hsBandBlockLen b
 
@@ -174,20 +171,43 @@ handleAllExceptions
 handleAllExceptions onError action =
   uninterruptibleMask_ (catch (fmap force action) onError)
 
-gdal_hs_openHook :: COpenHook
-gdal_hs_openHook carg impl = handleAllExceptions onExc $ do
-  Just arg <- BS.stripPrefix "HS:" <$> packCString carg
-  state <- GDALInternalState <$> createInternalState
-  ds <- runWithInternalState (openDataset arg) state
-  pokeHSDataset impl ds
-  statePtr <- castStablePtrToPtr <$> newStablePtr state
-  {#set HSDatasetImpl->state #} impl statePtr
-  return ok
+hs_gdal_openHook :: COpenHook
+hs_gdal_openHook carg = do
+  mArg <- BS.stripPrefix "HS:" <$> packCString carg
+  maybe (return nullPtr) (toGDALDatasetIO . openDataset) mArg
+
+toGDALDatasetIO :: GDAL s (HSDataset s) -> IO GDALDatasetH
+toGDALDatasetIO mkDataset =
+  alloca $ \impl ->
+  handleAllExceptions (onExc impl) $ do
+    state <- createGDALInternalState
+    ds <- runWithInternalState mkDataset state
+    pokeHSDataset impl ds
+    statePtr <- castStablePtrToPtr <$> newStablePtr state
+    {#set HSDatasetImpl->state #} impl statePtr
+    destroyState <- c_wrapDestroyState closeInternalStateHook
+    {#set HSDatasetImpl->destroyState#} impl destroyState
+    {#call unsafe hs_gdal_create_dataset#} impl
   where
-    onExc e = do
-      printErr ("Unhandled exception in openHook: ", e)
+    onExc impl e = do
+      printErr ("Unhandled exception in toGDALDatasetIO: ", e)
       {#call unsafe destroyHSDatasetImpl#} impl
-      return failure
+      return nullPtr
+
+toGDALDataset :: HSDataset s -> GDAL s GDALDatasetH
+toGDALDataset ds = do
+  state <- getInternalState
+  liftIO $ alloca $ \impl -> handleAllExceptions (onExc impl) $ do
+    pokeHSDataset impl ds
+    statePtr <- castStablePtrToPtr <$> newStablePtr state
+    {#set HSDatasetImpl->state #} impl statePtr
+    {#set HSDatasetImpl->destroyState#} impl nullFunPtr
+    {#call unsafe hs_gdal_create_dataset#} impl
+  where
+    onExc impl e = do
+      printErr ("Unhandled exception in toGDALDatasetIO: ", e)
+      {#call unsafe destroyHSDatasetImpl#} impl
+      return nullPtr
 
 openDataset :: GDALPath -> GDAL s (HSDataset s)
 openDataset path = do
@@ -226,8 +246,8 @@ readBandBlock' band ( i :+: j ) = liftIO $ do
 true = {#const TRUE #}
 false = {#const FALSE #}
 
-gdal_hs_identifyHook :: CIdentifyHook
-gdal_hs_identifyHook carg = handleAllExceptions onExc $ do
+hs_gdal_identifyHook :: CIdentifyHook
+hs_gdal_identifyHook carg = handleAllExceptions onExc $ do
   arg <- packCString carg
   return $ if BS.isPrefixOf "HS:" arg then true else false
   where
@@ -235,24 +255,24 @@ gdal_hs_identifyHook carg = handleAllExceptions onExc $ do
       printErr ("Unhandled exception in identifyHook: ", e)
       return false
 
-gdal_hs_registerDriverHook :: CRegisterDriverHook
-gdal_hs_registerDriverHook = return ()
+hs_gdal_registerDriverHook :: CRegisterDriverHook
+hs_gdal_registerDriverHook = return ()
 
-gdal_hs_unloadDriverHook :: CUnloadDriverHook
-gdal_hs_unloadDriverHook = return false
+hs_gdal_unloadDriverHook :: CUnloadDriverHook
+hs_gdal_unloadDriverHook = return false
 
-gdal_hs_destroyState
+foreign import ccall safe "wrapper"
+  c_wrapDestroyState :: (Ptr () -> IO ()) -> IO (FinalizerPtr ())
+
+closeInternalStateHook
   = handleAllExceptions onExc
-  . (closeInternalState <=< deRefStablePtr . castPtrToStablePtr)
+  . (closeGDALInternalState <=< deRefStablePtr . castPtrToStablePtr)
   where
     onExc e =
       printErr ("Unhandled exception in destroyState: ", e)
 
 
-foreign export ccall gdal_hs_openHook           :: COpenHook
-foreign export ccall gdal_hs_identifyHook       :: CIdentifyHook
-foreign export ccall gdal_hs_unloadDriverHook   :: CUnloadDriverHook
-foreign export ccall gdal_hs_registerDriverHook :: CRegisterDriverHook
-foreign export ccall gdal_hs_destroyState       :: Ptr () -> IO ()
-foreign import ccall unsafe "&gdal_hs_destroyState"
-  gdal_hs_destroyStatePtr :: FunPtr (Ptr () -> IO ())
+foreign export ccall hs_gdal_openHook           :: COpenHook
+foreign export ccall hs_gdal_identifyHook       :: CIdentifyHook
+foreign export ccall hs_gdal_unloadDriverHook   :: CUnloadDriverHook
+foreign export ccall hs_gdal_registerDriverHook :: CRegisterDriverHook
