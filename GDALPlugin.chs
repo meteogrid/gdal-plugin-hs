@@ -119,23 +119,23 @@ wrapReadBlockHook
   :: HSRasterBand s -> IO (FunPtr CReadBlockHook)
 wrapReadBlockHook b@HSRasterBand{..} = c_wrapReadBlockHook c_readBlock
   where
-    bLen = let x :+: y  = blockSize in x*y
+    c_readBlock :: CReadBlockHook
+    c_readBlock statePtr i j destPtr = handleAllExceptions onExc $ do
+      let ix = fmap fromIntegral (i :+: j)
+      state <- deRefState statePtr
+      v <- runWithInternalState (readBlock ix) state
+      St.unsafeWith v $ \srcPtr ->
+        copyArray (castPtr destPtr) srcPtr bLen
+      return ok
+
+    onExc e = do
+      printErr ("Unhandled exception in readBlock: ", e)
+      return failure
+
     deRefState :: Ptr () -> IO (GDALInternalState s)
     deRefState = fmap GDALInternalState . deRefStablePtr . castPtrToStablePtr
-    c_readBlock :: CReadBlockHook
-    c_readBlock statePtr
-              (fromIntegral -> i)
-              (fromIntegral -> j)
-              (castPtr -> destPtr) = do
-      eVec <- try . runWithInternalState (readBlock (i :+: j))
-          =<< deRefState statePtr
-      case eVec of
-        Right v -> St.unsafeWith v $ \srcPtr -> do
-          copyArray destPtr srcPtr bLen
-          return ok
-        Left (e :: SomeException) -> do
-          hPutStrLn stderr ("Unhandled exception in readBlock: " ++ show e)
-          return failure
+
+    bLen = hsBandBlockLen b
 
 pokeHSRasterBand :: Ptr (HSRasterBand s) -> HSRasterBand s -> IO ()
 pokeHSRasterBand p b@HSRasterBand{readBlock=(rb :: ReadBlockHook s a),..} = do
@@ -158,23 +158,24 @@ instance Storable (HSRasterBand s) where
     error "HSRasterBand's Storable's peek has not been implemented yet"
   poke = pokeHSRasterBand
 
+printErr = hPutStrLn stderr . show
 
 ok :: CInt
 ok = fromEnumC CE_None
 
 warning :: CInt
-warning = fromEnumC CE_None
+warning = fromEnumC CE_Warning
 
 failure :: CInt
 failure = fromEnumC CE_Failure
 
-handleAllExceptions onError action = uninterruptibleMask_ $
-  catch (fmap force action) $ \(e::SomeException) -> do
-    hPutStrLn stderr (show e)
-    onError
+handleAllExceptions
+  :: NFData a => (SomeException -> IO a) -> IO a -> IO a
+handleAllExceptions onError action =
+  uninterruptibleMask_ (catch (fmap force action) onError)
 
 gdal_hs_openHook :: COpenHook
-gdal_hs_openHook carg impl = handleAllExceptions cleanup $ do
+gdal_hs_openHook carg impl = handleAllExceptions onExc $ do
   Just arg <- BS.stripPrefix "HS:" <$> packCString carg
   state <- GDALInternalState <$> createInternalState
   ds <- runWithInternalState (openDataset arg) state
@@ -183,7 +184,8 @@ gdal_hs_openHook carg impl = handleAllExceptions cleanup $ do
   {#set HSDatasetImpl->state #} impl statePtr
   return ok
   where
-    cleanup = do
+    onExc e = do
+      printErr ("Unhandled exception in openHook: ", e)
       {#call unsafe destroyHSDatasetImpl#} impl
       return failure
 
@@ -203,17 +205,18 @@ openDataset path = do
       rasterBands = [
           HSRasterBand { blockSize = bandBlockSize bandIn
                        , nodata = bandNd
-                       , readBlock = fmap (St.map (subtract 1000)) .
+                       , readBlock = --fmap (St.map pixelFun) .
                           readBandBlock' bandIn
                         }
 
         ]
+      pixelFun v = if v > (-1) then v-1000 else v
   return ds
 
 readBandBlock' band ( i :+: j ) = liftIO $ do
   mVec <- Stm.unsafeNew (bandBlockLen band)
-  Stm.unsafeWith mVec $ \pBuf ->
-    {#call unsafe GDALReadBlock as lolailos #}
+  void $ Stm.unsafeWith mVec $ \pBuf ->
+    {#call GDALReadBlock as lolailos #}
           (castPtr ((\(RasterBandH b) -> b) (unBand band)))
           (fromIntegral i)
           (fromIntegral j)
@@ -224,9 +227,13 @@ true = {#const TRUE #}
 false = {#const FALSE #}
 
 gdal_hs_identifyHook :: CIdentifyHook
-gdal_hs_identifyHook carg = handleAllExceptions (return false) $ do
+gdal_hs_identifyHook carg = handleAllExceptions onExc $ do
   arg <- packCString carg
   return $ if BS.isPrefixOf "HS:" arg then true else false
+  where
+    onExc e = do
+      printErr ("Unhandled exception in identifyHook: ", e)
+      return false
 
 gdal_hs_registerDriverHook :: CRegisterDriverHook
 gdal_hs_registerDriverHook = return ()
@@ -234,8 +241,12 @@ gdal_hs_registerDriverHook = return ()
 gdal_hs_unloadDriverHook :: CUnloadDriverHook
 gdal_hs_unloadDriverHook = return false
 
-gdal_hs_destroyState = handleAllExceptions (return ()) .
-  (closeInternalState <=< deRefStablePtr . castPtrToStablePtr)
+gdal_hs_destroyState
+  = handleAllExceptions onExc
+  . (closeInternalState <=< deRefStablePtr . castPtrToStablePtr)
+  where
+    onExc e =
+      printErr ("Unhandled exception in destroyState: ", e)
 
 
 foreign export ccall gdal_hs_openHook           :: COpenHook

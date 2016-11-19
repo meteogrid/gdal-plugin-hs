@@ -41,11 +41,11 @@ public:
   const char*          GetProjectionRef();
 
 private:
-  double adfGeoTransform[6];
+  HSDataset(const hsDatasetImpl&);
+  const double adfGeoTransform[6];
   char *pszProjection;
-  HsStablePtr state;
-  void (*pfnDestroyState)( HsStablePtr );
-  void Initialize ( const hsDatasetImpl& );
+  const HsStablePtr state;
+  void (*const pfnDestroyState)( HsStablePtr );
 };
 
 
@@ -70,7 +70,7 @@ private:
   const HsStablePtr state;
   const double noDataValue;
   const bool hasNodata;
-  int (*const pfnReadBlock)(HsStablePtr, int, int, void*);
+  int (*const pfnReadBlock)(const HsStablePtr, const int, const int, void*);
 
 };
 
@@ -78,16 +78,35 @@ private:
 /*                       HSDataset::HSDataset()                         */
 /************************************************************************/
 HSDataset::HSDataset():
+  adfGeoTransform{0,1,0,0,0,1},
   pszProjection(0),
   state(0),
   pfnDestroyState(0)
 {
-  adfGeoTransform[0] = 0.0;
-  adfGeoTransform[1] = 1.0;
-  adfGeoTransform[2] = 0.0;
-  adfGeoTransform[3] = 0.0;
-  adfGeoTransform[4] = 0.0;
-  adfGeoTransform[5] = 1.0;
+}
+
+/************************************************************************/
+/*                       HSDataset::HSDataset(impl)                     */
+/************************************************************************/
+HSDataset::HSDataset(const hsDatasetImpl& impl):
+  adfGeoTransform{impl.adfGeoTransform[0]
+                 ,impl.adfGeoTransform[1]
+                 ,impl.adfGeoTransform[2]
+                 ,impl.adfGeoTransform[3]
+                 ,impl.adfGeoTransform[4]
+                 ,impl.adfGeoTransform[5]},
+  pszProjection(impl.pszProjection),
+  state(impl.state),
+  pfnDestroyState(impl.destroyState)
+{
+  this->nRasterXSize    = impl.nRasterXSize;
+  this->nRasterYSize    = impl.nRasterYSize;
+  this->nBands          = impl.nBands;
+
+  for (int i=0; i < this->nBands; i++) {
+    HSRasterBand *band = new HSRasterBand ( this, i+1, impl.bands[i] ) ;
+    this->SetBand ( i+1, band );
+  }
 }
 
 /************************************************************************/
@@ -125,31 +144,9 @@ GDALDataset *HSDataset::Open( GDALOpenInfo * poOpenInfo )
   hsDatasetImpl impl;
   memset(&impl, 0, sizeof(hsDatasetImpl));
   if ( gdal_hs_openHook ( poOpenInfo->pszFilename, &impl ) == 0 ) {
-    HSDataset *ds = new HSDataset();
-    ds->Initialize( impl );
-    return ds;
+    return new HSDataset( impl );
   }
   return NULL;
-}
-
-/************************************************************************/
-/*                       HSDataset::Initialize()                        */
-/************************************************************************/
-void HSDataset::Initialize( const hsDatasetImpl& impl )
-{
-  this->nRasterXSize    = impl.nRasterXSize;
-  this->nRasterYSize    = impl.nRasterYSize;
-  this->nBands          = impl.nBands;
-  this->state           = impl.state;
-  this->pszProjection   = impl.pszProjection;
-  this->pfnDestroyState = impl.destroyState;
-  memcpy( this->adfGeoTransform, impl.adfGeoTransform, sizeof(double) * 6 );
-
-  for (int i=0; i < this->nBands; i++) {
-    HSRasterBand *band = new HSRasterBand ( this, i+1, impl.bands[i] ) ;
-    this->SetBand ( i+1, band );
-  }
-
 }
 
 /************************************************************************/

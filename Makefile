@@ -5,7 +5,7 @@ LIBS=-lHSrts_thr -lCffi
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS) -fPIC
-GHCFLAGS  = $(CFLAGS) -Wall -optc-fPIC -O2
+GHCFLAGS  = $(CFLAGS) -Wall -optc-fPIC -O2 -optc-std=c++11
 #GHCFLAGS += -prof -fprof-auto
 
 all: plugin
