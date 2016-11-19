@@ -6,11 +6,20 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ViewPatterns #-}
-module GDALPlugin () where
+module GDAL.Plugin.Internal (
+    toGDALDataset
+  , toGDALDatasetIO
+  , handleAllExceptions
+  , true
+  , false
+  , printErr
+  ) where
 
 #include "gdal.h"
 #include "cpl_conv.h"
 #include "hsdataset.h"
+
+import GDAL.Plugin.Types
 
 import GDAL
 import GDAL.Internal.GDAL ( unBand )
@@ -52,35 +61,8 @@ import System.IO ( stdout, stderr, hPutStrLn )
 {# pointer HSDatasetImpl #}
 {# pointer HSRasterBandImpl #}
 
-type GDALPath = BS.ByteString
-type GDALDatasetH = Ptr ()
-
-type COpenHook = CString -> IO GDALDatasetH
-type OpenHook = GDALPath -> IO (Either ErrorType GDALDatasetH)
-
-type CIdentifyHook = CString -> IO CInt
-type IdentifyHook = GDALPath -> IO CInt
-
-data UnloadAction = ExitRTS | KeepRTS
-
-type CUnloadDriverHook = IO CInt
-type UnloadDriverHook = IO UnloadAction
-
-type CRegisterDriverHook = IO ()
-type RegisterDriverKook = IO ()
-
 type CReadBlockHook = Ptr () -> CInt -> CInt -> Ptr () -> IO CInt
-type ReadBlockHook s a = BlockIx -> GDAL s (St.Vector a)
 
-data HSDataset s = HSDataset
-  { rasterSize   :: !Size
-  , bands        :: [HSRasterBand s]
-  , srs          :: !(Maybe SpatialReference)
-  , geotransform :: !Geotransform
-  }
-
-instance NFData (HSDataset s) where
-  rnf (HSDataset a b c d) = rnf a `seq` rnf b  `seq` rnf c `seq` rnf d
 
 pokeHSDataset p HSDataset{..} = uninterruptibleMask_ $ do
   {#set HSDatasetImpl->nRasterXSize#}  p xsize
@@ -97,17 +79,6 @@ pokeHSDataset p HSDataset{..} = uninterruptibleMask_ $ do
   where
     xsize :+: ysize = fmap fromIntegral rasterSize
 
-data HSRasterBand s = forall a. (NFData a, GDALType a) =>
-  HSRasterBand
-    { blockSize :: !Size
-    , nodata    :: !(Maybe a)
-    , readBlock :: !(ReadBlockHook s a)
-    }
-
-hsBandBlockLen = (\(x :+: y) -> x*y) . blockSize
-
-instance NFData (HSRasterBand s) where
-  rnf (HSRasterBand a b c) = rnf a `seq` rnf b  `seq` rnf c
 
 foreign import ccall safe "wrapper"
   c_wrapReadBlockHook :: CReadBlockHook -> IO (FunPtr CReadBlockHook)
@@ -171,11 +142,6 @@ handleAllExceptions
 handleAllExceptions onError action =
   uninterruptibleMask_ (catch (fmap force action) onError)
 
-hs_gdal_openHook :: COpenHook
-hs_gdal_openHook carg = do
-  mArg <- BS.stripPrefix "HS:" <$> packCString carg
-  maybe (return nullPtr) (toGDALDatasetIO . openDataset) mArg
-
 toGDALDatasetIO :: GDAL s (HSDataset s) -> IO GDALDatasetH
 toGDALDatasetIO mkDataset =
   alloca $ \impl ->
@@ -209,57 +175,11 @@ toGDALDataset ds = do
       {#call unsafe destroyHSDatasetImpl#} impl
       return nullPtr
 
-openDataset :: GDALPath -> GDAL s (HSDataset s)
-openDataset path = do
-  dsIn <- openReadOnly (BS.unpack path) GDT_Int16
-  srsIn <- datasetProjection dsIn
-  gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> datasetGeotransform dsIn
-  bandIn <- getBand 1 dsIn
-  bandNd <- bandNodataValue bandIn
-  let ds = HSDataset
-             { rasterSize   = datasetSize dsIn
-             , bands        = rasterBands
-             , srs          = srsIn
-             , geotransform = gtIn
-             }
-      rasterBands = [
-          HSRasterBand { blockSize = bandBlockSize bandIn
-                       , nodata = bandNd
-                       , readBlock = --fmap (St.map pixelFun) .
-                          readBandBlock' bandIn
-                        }
 
-        ]
-      pixelFun v = if v > (-1) then v-1000 else v
-  return ds
-
-readBandBlock' band ( i :+: j ) = liftIO $ do
-  mVec <- Stm.unsafeNew (bandBlockLen band)
-  void $ Stm.unsafeWith mVec $ \pBuf ->
-    {#call GDALReadBlock as lolailos #}
-          (castPtr ((\(RasterBandH b) -> b) (unBand band)))
-          (fromIntegral i)
-          (fromIntegral j)
-          (castPtr pBuf)
-  St.unsafeFreeze mVec
-
+true, false :: CInt
 true = {#const TRUE #}
 false = {#const FALSE #}
 
-hs_gdal_identifyHook :: CIdentifyHook
-hs_gdal_identifyHook carg = handleAllExceptions onExc $ do
-  arg <- packCString carg
-  return $ if BS.isPrefixOf "HS:" arg then true else false
-  where
-    onExc e = do
-      printErr ("Unhandled exception in identifyHook: ", e)
-      return false
-
-hs_gdal_registerDriverHook :: CRegisterDriverHook
-hs_gdal_registerDriverHook = return ()
-
-hs_gdal_unloadDriverHook :: CUnloadDriverHook
-hs_gdal_unloadDriverHook = return false
 
 foreign import ccall safe "wrapper"
   c_wrapDestroyState :: (Ptr () -> IO ()) -> IO (FinalizerPtr ())
@@ -270,9 +190,3 @@ closeInternalStateHook
   where
     onExc e =
       printErr ("Unhandled exception in destroyState: ", e)
-
-
-foreign export ccall hs_gdal_openHook           :: COpenHook
-foreign export ccall hs_gdal_identifyHook       :: CIdentifyHook
-foreign export ccall hs_gdal_unloadDriverHook   :: CUnloadDriverHook
-foreign export ccall hs_gdal_registerDriverHook :: CRegisterDriverHook

@@ -1,7 +1,6 @@
 #include "HsFFI.h"
 #include "gdal_priv.h"
 #include "gdal_frmts.h"
-#include "hsdataset.h"
 
 #ifdef __GLASGOW_HASKELL__
 #include "GDALPlugin_stub.h"

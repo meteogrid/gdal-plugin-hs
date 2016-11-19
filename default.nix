@@ -25,6 +25,7 @@ stdenv.mkDerivation rec {
   buildInputs = [
     gdal
     ghc
+    pkgs.cabal-install
   ];
 
   shellHook = ''

@@ -1,31 +1,29 @@
-GHC = ghc
-C2HS = c2hs
+CABAL = cabal
+GHC = $(CABAL) exec -- ghc
 CXX = g++
 LIBS=-lHSrts_thr -lCffi
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS) -fPIC
-GHCFLAGS  = $(CFLAGS) -Wall -optc-fPIC -O2 -optc-std=c++11
+GHCFLAGS  = $(CFLAGS) -Wall -package ghc -optc-fPIC -O2 -optc-std=c++11
 #GHCFLAGS += -prof -fprof-auto
 
-all: plugin
+all: gdal_HS.so
 
-plugin: gdal_HS.so
-
-gdal_HS.so: GDALPlugin.hs gdal_HS.cpp hsdataset.cpp
-
-hsdataset.cpp: GDALPlugin_stub.h hsdataset.h
+gdal_HS.so: GDALPlugin.hs gdal_HS.cpp
 gdal_HS.cpp: GDALPlugin_stub.h
-GDALPlugin.hs: hsdataset.h
+GDALPlugin.hs: cabal.sandbox.config
+
+cabal.sandbox.config:
+	$(CABAL) sandbox init
+	$(CABAL) install
 
 %.so:
 	$(GHC) --make -shared $(GHCFLAGS) $^ -o $@ $(LIBS)
 
-%.hs: %.chs
-	$(C2HS) -C $(CPPFLAGS) $< -o $@
 
 %_stub.h: %.hs
-	$(GHC) -c $(GHCFLAGS) $< -o /dev/null
+	$(GHC) -c $(GHCFLAGS) -O0 $< -o /dev/null
 
 clean:
-	rm -rf *.o *.hi *.chi GDALPlugin.hs *.chs.h *.so *_o_split *_stub.h
+	rm -rf *.o *.hi *.so *_o_split *_stub.h .cabal-sandbox cabal.sandbox.config
