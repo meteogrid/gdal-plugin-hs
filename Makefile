@@ -12,10 +12,11 @@ all: plugin
 
 plugin: gdal_HS.so
 
-gdal_HS.so: gdal_HS.cpp GDALPlugin.hs
+gdal_HS.so: GDALPlugin.hs gdal_HS.cpp hsdataset.cpp
 
-gdal_HS.cpp: GDALPlugin_stub.h gdal_HS.h
-GDALPlugin.hs: gdal_HS.h
+hsdataset.cpp: GDALPlugin_stub.h hsdataset.h
+gdal_HS.cpp: GDALPlugin_stub.h
+GDALPlugin.hs: hsdataset.h
 
 %.so:
 	$(GHC) --make -shared $(GHCFLAGS) $^ -o $@ $(LIBS)

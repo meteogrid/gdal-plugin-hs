@@ -10,7 +10,7 @@ module GDALPlugin () where
 
 #include "gdal.h"
 #include "cpl_conv.h"
-#include "gdal_HS.h"
+#include "hsdataset.h"
 
 import GDAL
 import GDAL.Internal.GDAL ( unBand )

@@ -5,9 +5,14 @@
 }:
 
 let
-    ghc = haskellPackages.ghcWithPackages (p: with p; [
+    ghc = haskellPackages.ghcWithHoogle (p: with p; [
+      ghc-paths
+      data-default
+      temporary
       bindings-gdal
       c2hs
+      text
+    ghc-mod
       ]);
 in
 stdenv.mkDerivation rec {
