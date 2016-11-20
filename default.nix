@@ -8,10 +8,18 @@ let
     ghc = haskellPackages.ghcWithHoogle (p: with p; [
       ghc-paths
       data-default
+      vector
+      bytestring
+      data-default
+      text
+      temporary
+      deepseq
       temporary
       bindings-gdal
       c2hs
       text
+      http-types
+      plugins
     ghc-mod
       ]);
 in

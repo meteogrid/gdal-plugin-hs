@@ -12,6 +12,7 @@ import           Control.DeepSeq ( NFData (..) )
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as St
 import           Foreign.Ptr ( Ptr )
+import           Network.HTTP.Types.URI ( QueryText )
 
 type GDALPath = BS.ByteString
 type GDALDatasetH = Ptr ()
@@ -25,6 +26,9 @@ type UnloadDriverHook = IO UnloadAction
 type RegisterDriverHook = IO ()
 
 type ReadBlockHook s a = BlockIx -> GDAL s (St.Vector a)
+
+newtype HSDatasetFactory = HSDatasetFactory
+  { getFactory :: forall s. QueryText -> GDAL s (HSDataset s) }
 
 data HSDataset s = HSDataset
   { rasterSize   :: Size

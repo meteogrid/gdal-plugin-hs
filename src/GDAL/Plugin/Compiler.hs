@@ -6,11 +6,12 @@ module GDAL.Plugin.Compiler (
   , interpretWithEnv
 ) where
 
-#define DYNAMIC_LINKING
 #define COMPILE_PLUGINS
+#define DYNAMIC_LINKING
 
 import Control.Exception (IOException, Handler(Handler), catches)
 import Control.Monad (void)
+import Control.Monad.IO.Class ( liftIO )
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -49,6 +50,11 @@ instance Default EvalEnv where
       , envTargets     = []
       }
 
+addOptl   f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
+
+alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
+alterSettings f dflags = dflags { settings = f (settings dflags) }
+
 interpret
   :: forall a. Typeable a
   => String
@@ -64,18 +70,12 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
   logRef <- newIORef mempty :: (IO (IORef Builder))
   let compileAndLoad = do
         dflags <- getSessionDynFlags
-        let dflags' =
-#ifdef DYNAMIC_LINKING
-                      dynamicTooMkDynamicDynFlags
-#else
-                      id
-#endif
-#ifdef COMPILE_PLUGINS
+        let dflags' = updateWays
+                    . dynamicTooMkDynamicDynFlags
                     . updOptLevel 2
-#else
-                    . id
-#endif
                     . setTmpDir dir
+                    . setGeneralFlag' Opt_PIC
+                    . addOptl "-lHSrts_thr-ghc8.0.1"
                     $ dflags {
                         mainFunIs     = Nothing
                       --, safeHaskell   = Sf_Safe
@@ -83,23 +83,21 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
                       , outputFile    = Nothing
                       , ghcLink       = LinkInMemory
                       , ghcMode       = CompManager
-#ifdef COMPILE_PLUGINS
+                      , ways          = [ WayDyn, WayThreaded ]
                       , hscTarget     = HscAsm
-#else
-                      , hscTarget     = HscInterpreted
-#endif
                       --, objectDir     = Just dir
                       --, hiDir         = Just dir
                       , importPaths   = envSearchPath env
                       --, log_action    = logHandler logRef
                       , verbosity     = 3
                       }
+        liftIO (print (picCCOpts dflags'))
         void $ setSessionDynFlags dflags'
         defaultCleanupHandler dflags' $ do
           targets <- mapM (`guessTarget` Nothing) (envTargets env)
           setTargets targets
           void $ load LoadAllTargets
-          importModules (envImports env ++ envTargets env)
+          importModules (envImports env)
           fmap (Right . unsafeCoerce) $
             compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a))
       handleEx e = do

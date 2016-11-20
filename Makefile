@@ -1,12 +1,13 @@
 CABAL = cabal
 GHC = $(CABAL) exec -- ghc
 CXX = g++
-LIBS=-lHSrts_thr -lCffi
+LIBS=-lHSrts_thr-ghc8.0.1 -lCffi
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
-CFLAGS     = $(CPPFLAGS) -fPIC
-GHCFLAGS  = $(CFLAGS) -Wall -package ghc -optc-fPIC -O2 -optc-std=c++11
+CFLAGS     = $(CPPFLAGS)
+GHCFLAGS  = $(CFLAGS) -Wall -package ghc -O2 -optc-std=c++11
 #GHCFLAGS += -prof -fprof-auto
+GHCFLAGS += -dynamic
 
 all: gdal_HS.so
 
@@ -26,4 +27,4 @@ cabal.sandbox.config:
 	$(GHC) -c $(GHCFLAGS) -O0 $< -o /dev/null
 
 clean:
-	rm -rf *.o *.hi *.so *_o_split *_stub.h .cabal-sandbox cabal.sandbox.config
+	rm -rf *.o *.dyn_o *.hi *.dyn_hi *.so *_o_split *_stub.h .cabal-sandbox cabal.sandbox.config
