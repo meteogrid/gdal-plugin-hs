@@ -78,7 +78,7 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
                     . addOptl "-lHSrts_thr-ghc8.0.1"
                     $ dflags {
                         mainFunIs     = Nothing
-                      --, safeHaskell   = Sf_Safe
+                      , safeHaskell   = Sf_Safe
                       , outputHi      = Nothing
                       , outputFile    = Nothing
                       , ghcLink       = LinkInMemory
@@ -89,9 +89,8 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
                       --, hiDir         = Just dir
                       , importPaths   = envSearchPath env
                       --, log_action    = logHandler logRef
-                      , verbosity     = 3
+                      , verbosity     = 1
                       }
-        liftIO (print (picCCOpts dflags'))
         void $ setSessionDynFlags dflags'
         defaultCleanupHandler dflags' $ do
           targets <- mapM (`guessTarget` Nothing) (envTargets env)

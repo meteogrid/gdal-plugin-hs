@@ -1,9 +1,13 @@
+{-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
-module GDAL.Plugin.Types where
+module GDAL.Plugin.Types (
+    module GDAL.Plugin.Types
+  , QueryText
+) where
 
 import           GDAL
 import           OSR ( SpatialReference )
