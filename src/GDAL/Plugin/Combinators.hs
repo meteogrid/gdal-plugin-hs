@@ -14,6 +14,7 @@ import GDAL.Plugin.Types
 
 import GDAL
 import GDAL.Internal.GDAL
+import GDAL.Internal.HSDataset
 import Data.Int
 import qualified Data.Text as T
 import qualified Data.ByteString.Char8 as BS

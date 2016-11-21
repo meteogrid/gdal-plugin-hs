@@ -1,11 +1,10 @@
-CABAL = cabal
-GHC = $(CABAL) exec -- ghc
+GHC = ghc
 CXX = g++
 LIBS=-lHSrts_thr-ghc8.0.1 -lCffi
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS)
-GHCFLAGS  = $(CFLAGS) -Wall -package ghc -O2 -optc-std=c++11
+GHCFLAGS  = $(CFLAGS) -Wall -O2
 #GHCFLAGS += -prof -fprof-auto
 GHCFLAGS += -dynamic
 
@@ -13,11 +12,6 @@ all: gdal_HS.so
 
 gdal_HS.so: GDALPlugin.hs gdal_HS.cpp
 gdal_HS.cpp: GDALPlugin_stub.h
-GDALPlugin.hs: cabal.sandbox.config
-
-cabal.sandbox.config:
-	$(CABAL) sandbox init
-	$(CABAL) install
 
 %.so:
 	$(GHC) --make -shared $(GHCFLAGS) $^ -o $@ $(LIBS)

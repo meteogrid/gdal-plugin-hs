@@ -14,23 +14,11 @@ void GDALRegister_HS();
 CPL_C_END
 
 
-static void GDALHSDeregister (GDALDriver* )
+static void GDALHSUnload (GDALDriver* )
 {
-  if ( hs_gdal_unloadDriverHook() == TRUE ) {
-    hs_exit();
-  }
+  hs_exit();
 }
 
-static int GDALHSIdentify( GDALOpenInfo * poOpenInfo )
-{
-  return hs_gdal_identifyHook ( poOpenInfo->pszFilename );
-}
-
-static GDALDataset *GDALHSOpen( GDALOpenInfo * poOpenInfo )
-{
-  return static_cast<GDALDataset*>(
-    hs_gdal_openHook ( poOpenInfo->pszFilename ) );
-}
 
 /************************************************************************/
 /*                         GDALRegister_HS()                            */
@@ -42,6 +30,13 @@ void GDALRegister_HS()
   if( GDALGetDriverByName( "HS" ) != NULL )
       return;
 
+  hs_init(NULL, NULL);
+#ifdef __GLASGOW_HASKELL__
+  hs_add_root(__stginit_GDALPlugin);
+#endif
+  hs_gdal_register_plugin();
+}
+  /*
   GDALDriver *poDriver = new GDALDriver();
 
   poDriver->SetDescription( "HS" );
@@ -54,14 +49,10 @@ void GDALRegister_HS()
 
   poDriver->pfnOpen = GDALHSOpen;
   poDriver->pfnIdentify = GDALHSIdentify;
-  poDriver->pfnUnloadDriver = GDALHSDeregister;
+  poDriver->pfnUnloadDriver = GDALHSUnload;
 
-  hs_init(NULL, NULL);
-#ifdef __GLASGOW_HASKELL__
-  hs_add_root(__stginit_GDALPlugin);
-#endif
   GetGDALDriverManager()->RegisterDriver( poDriver );
 
   hs_gdal_registerDriverHook();
-}
+  */
 

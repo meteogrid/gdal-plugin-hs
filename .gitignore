@@ -22,4 +22,3 @@ a.out
 *.sw?
 *_stub.h
 result
-GDALPlugin.hs

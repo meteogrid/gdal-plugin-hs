@@ -18,8 +18,8 @@ cabal-version:       >=1.10
 library
   exposed-modules:     GDAL.Plugin
                      , GDAL.Plugin.Compiler
+                     , GDAL.Plugin.Driver
                      , GDAL.Plugin.Combinators
-                     , GDAL.Plugin.Internal
                      , GDAL.Plugin.Types
   build-depends:
       base >=4.9 && <4.10
@@ -28,13 +28,11 @@ library
     , deepseq
     , vector
     , temporary
-    , ghc
+    , ghc == 8.0.1
     , ghc-paths
     , text
     , data-default
     , http-types
-  include-dirs:       cbits
-  ghc-options:         -fPIC -optc-fPIC
-  c-sources:           cbits/hsdataset.cpp
+  ghc-options:         -Wall
   hs-source-dirs:      src
   default-language:    Haskell2010

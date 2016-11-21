@@ -1,65 +1,36 @@
-{ pkgs   ? import <nixpkgs> {}
-, stdenv ? pkgs.stdenv
-, gdal   ? pkgs.gdal
-, haskellPackages ? pkgs.haskell.compiler.ghc801
-}:
+{
+  gdal-plugin-hs-dso = {stdenv, ghc, gdal}: stdenv.mkDerivation rec {
+    version = "1.0";
+    shortname = "gdal-plugin-hs-dso";
+    name = "${shortname}-${version}";
 
-let
-    ghc = haskellPackages.ghcWithHoogle (p: with p; [
-      ghc-paths
-      data-default
-      vector
-      bytestring
-      data-default
-      text
-      temporary
-      deepseq
-      temporary
-      bindings-gdal
-      c2hs
-      text
-      http-types
-      plugins
-    ghc-mod
-      ]);
-in
-stdenv.mkDerivation rec {
-  version = "1.0";
-  shortname = "gdal-plugin-hs";
-  name = "${shortname}-${version}";
+    src = ./dso;
 
-  src = ./.;
+    buildInputs = [
+      gdal
+      ghc
+    ];
 
-  buildInputs = [
-    gdal
-    ghc
-    pkgs.cabal-install
-  ];
 
-  shellHook = ''
-    runHook setVariables
-    runHook preShellHook
-    export NIX_GHC="${ghc.out}/bin/ghc"
-    export NIX_GHCPKG="${ghc.out}/bin/ghc-pkg"
-    export NIX_GHC_DOCDIR="${ghc.out}/share/doc/ghc/html"
-    export NIX_GHC_LIBDIR="${ghc.out}/lib/${ghc.name}"
-    '';
+    patchPhase = "make clean";
 
-  installPhase = ''
-    mkdir -p $out/lib
-    install -m 0755 gdal_HS.so $out/lib/
-    '';
+    installPhase = ''
+      mkdir -p $out/lib
+      install -m 0755 gdal_HS.so $out/lib/
+      '';
 
-  doCheck = true;
+    doCheck = true;
 
-  checkPhase = ''
-    export GDAL_DRIVER_PATH="$(pwd)"
-    gdalinfo --formats | grep Haskell
-    '';
+    checkPhase = ''
+      export GDAL_DRIVER_PATH="$(pwd)"
+      gdalinfo --formats | grep Haskell
+      '';
 
-  meta = {
-    description = "GDAL which embeds GHC";
-    homepage = https://github.com/meteogrid/gdal-plugin-hs;
-    license = stdenv.lib.licenses.bsd3;
+    meta = {
+      description = "GDAL which embeds GHC";
+      homepage = https://github.com/meteogrid/gdal-plugin-hs;
+      license = stdenv.lib.licenses.bsd3;
+    };
   };
+  gdal-plugin-hs = import ./cabal.nix;
 }
