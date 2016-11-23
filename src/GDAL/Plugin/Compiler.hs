@@ -17,7 +17,7 @@ import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import Control.Exception ( IOException, Handler(Handler), catches
                          , SomeException )
-import Control.Monad (void)
+import Control.Monad (void, forever)
 import Control.Monad.IO.Class ( liftIO )
 import Data.Char (isDigit)
 import Data.Text (Text)
@@ -25,7 +25,7 @@ import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import Data.Text.Lazy.Builder (Builder, toLazyText)
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef)
+import Data.IORef (IORef, newIORef, writeIORef, readIORef, modifyIORef)
 import Data.Typeable (Typeable, typeOf)
 import Data.Monoid (mempty, mappend)
 import Data.Default (Default(..))
@@ -33,6 +33,7 @@ import GHC hiding (importPaths)
 import GHC.Paths (libdir)
 import ErrUtils as GHC
 import HscTypes as GHC
+import Exception ( gtry )
 import Outputable as GHC hiding (parens)
 import DynFlags as GHC
 import GHC.Exts (unsafeCoerce#)
@@ -70,14 +71,17 @@ data Result a where
   Failure :: SomeException -> CompilerMessages -> Result a
 
 
-startCompiler :: IO (Either String Compiler)
+startCompiler :: IO Compiler
 startCompiler = startCompilerWith def
 
-startCompilerWith :: CompilerEnv -> IO (Either String Compiler)
-startCompilerWith = undefined
+startCompilerWith :: CompilerEnv -> IO Compiler
+startCompilerWith env = do
+  chan <- newChan
+  tid <- forkIO (compilerThread chan env)
+  return (Compiler tid chan)
 
-stopCompiler :: Compiler -> IO (Either String ())
-stopCompiler = undefined
+stopCompiler :: Compiler -> IO ()
+stopCompiler = killThread . compilerTid
 
 compile
   :: forall a. Typeable a
@@ -85,59 +89,74 @@ compile
   -> [String]
   -> String
   -> IO (Result a)
-compile = undefined
+compile comp targets code = do
+  resRef <- newEmptyMVar
+  writeChan (compilerChan comp) (Compile targets code resRef)
+  takeMVar resRef
 
+compilerThread :: Chan Request -> CompilerEnv -> IO ()
+compilerThread chan env = do
+  logRef <- newIORef mempty :: (IO (IORef Builder))
+  runGhc (Just (envLibdir env)) $ do
+    dflags <- getSessionDynFlags
+    let dflags' = updateWays
+                . dynamicTooMkDynamicDynFlags
+                . updOptLevel 2
+                . addOptl "-lHSrts_thr-ghc8.0.1"
+                -- . setGeneralFlag' Opt_WarnIsError
+                . flip (foldl wopt_set) [toEnum 0 ..] -- sets all warnings
+                $ dflags {
+                    mainFunIs     = Nothing
+                  , safeHaskell   = Sf_Safe
+                  , outputHi      = Nothing
+                  , outputFile    = Nothing
+                  , ghcLink       = LinkInMemory
+                  , ghcMode       = CompManager
+                  , ways          = [ WayDyn, WayThreaded ]
+                  , hscTarget     = HscAsm
+                  --, objectDir     = Just dir
+                  --, hiDir         = Just dir
+                  , importPaths   = envSearchPath env
+                  , log_action    = mkLogHandler logRef
+                  , verbosity     = 1
+                  }
+    void $ setSessionDynFlags dflags'
+    forever $ do
+      req <- liftIO (readChan chan)
+      case req of
+        Compile targets code resRef -> do
+          liftIO (writeIORef logRef mempty)
+          eRes <- gtry (compileTargets env targets code)
+          liftIO $ do
+            msgs <- LT.toStrict . toLazyText
+                <$> readIORef logRef
+            writeIORef logRef mempty
+            putMVar resRef $ case eRes of
+              Right r -> Success r msgs
+              Left  e -> Failure e msgs
 
 {-
-interpretWith
-  :: forall a. Typeable a
-  => CompilerEnv
-  -> [String]
-  -> String
-  -> IO (Either Text a)
-interpretWith env targets code = do
-  logRef <- newIORef mempty :: (IO (IORef Builder))
-  let compileAndLoad = do
-        dflags <- getSessionDynFlags
-        let dflags' = updateWays
-                    . dynamicTooMkDynamicDynFlags
-                    . updOptLevel 2
-                    . addOptl "-lHSrts_thr-ghc8.0.1"
-                    -- . setGeneralFlag' Opt_WarnIsError
-                    . flip (foldl wopt_set) [toEnum 0 ..] -- sets all warnings
-                    $ dflags {
-                        mainFunIs     = Nothing
-                      , safeHaskell   = Sf_Safe
-                      , outputHi      = Nothing
-                      , outputFile    = Nothing
-                      , ghcLink       = LinkInMemory
-                      , ghcMode       = CompManager
-                      , ways          = [ WayDyn, WayThreaded ]
-                      , hscTarget     = HscAsm
-                      --, objectDir     = Just dir
-                      --, hiDir         = Just dir
-                      , importPaths   = envSearchPath env
-                      , log_action    = mkLogHandler logRef
-                      , verbosity     = 1
-                      }
-        void $ setSessionDynFlags dflags'
-        setTargets =<< mapM (`guessTarget` Nothing) targets
-        void $ load LoadAllTargets
-        importModules (envImports env ++ targets)
-        fmap (Right . unsafeCoerce#) $
-          compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a))
-      handleEx e = do
-        msg <- LT.toStrict . toLazyText <$> readIORef logRef
-        return $ Left (if not (T.null msg) then msg else T.pack e)
-
   runGhc (Just (envLibdir env)) compileAndLoad `catches` [
         Handler (\(e :: SourceError) -> handleEx (show e))
       , Handler (\(e :: GhcApiError) -> handleEx (show e))
       , Handler (\(e :: IOException) -> handleEx (show e))
     ]
-
 -}
 
+unloadTargets :: Ghc ()
+unloadTargets = do
+ setTargets []
+ void $ load LoadAllTargets
+
+compileTargets
+  :: forall a. Typeable a
+  => CompilerEnv -> [String] -> String -> Ghc a
+compileTargets env targets code = do
+  setTargets =<< mapM (`guessTarget` Nothing) targets
+  void $ load LoadAllTargets
+  importModules (envImports env ++ targets)
+  unsafeCoerce# <$>
+    (compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a)))
 
 importModules:: [String] -> Ghc ()
 importModules =

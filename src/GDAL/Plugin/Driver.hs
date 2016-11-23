@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module GDAL.Plugin.Driver ( mkDriver, registerDriver, installDriver ) where
+module GDAL.Plugin.Driver ( mkDriver, registerDriver ) where
 
 import           GDAL.Plugin.Types
 import           GDAL.Plugin.Compiler
@@ -16,20 +16,15 @@ import qualified Data.Text.IO as T
 import           Network.HTTP.Types.URI ( parseQueryText )
 import           System.IO ( stderr )
 
-installDriver :: IO ()
-installDriver = mkDriver >>= registerDriver
-
 mkDriver :: IO (Driver ReadWrite)
 mkDriver = do
-  compiler <- either fail return
-           =<< startCompilerWith (def {envImports =[ "GDAL.Plugin" ]})
+  compiler <- startCompilerWith (def {envImports =[ "GDAL.Plugin" ]})
   drv <- createDriver HSDriver
     { hsdName     = "HS"
     , hsdIdentify = return . BS.isPrefixOf "HS:"
     , hsdOpen     = doOpen (compile compiler)
     }
   mapM_ (\(k,v) -> setMetadataItem Nothing k v drv) meta
-  registerDriver drv
   return drv
   where
     meta = [ ("DCAP_RASTER", "YES")
