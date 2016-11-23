@@ -54,8 +54,8 @@ mkDriver = do
         ("SomeHSDatasetFactory " ++ symName)
       case eSym of
         Right factory -> return (HsdDataset (getFactory factory query))
-        Left errors  -> do
-          mapM_ (T.hPutStrLn stderr) errors
+        Left error  -> do
+          T.hPutStrLn stderr error
           return HsdError
 
 popArg :: Eq a => a -> [(a, Maybe b)] -> (Maybe b, [(a, Maybe b)])
