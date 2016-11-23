@@ -2,7 +2,7 @@
 module GDAL.Plugin.Driver ( mkDriver, registerDriver, installDriver ) where
 
 import           GDAL.Plugin.Types
-import           GDAL.Plugin.Compiler ( interpretWith, envImports )
+import           GDAL.Plugin.Compiler
 
 import           GDAL
 import           GDAL.Internal.HSDriver
@@ -21,10 +21,12 @@ installDriver = mkDriver >>= registerDriver
 
 mkDriver :: IO (Driver ReadWrite)
 mkDriver = do
+  compiler <- either fail return
+           =<< startCompilerWith (def {envImports =[ "GDAL.Plugin" ]})
   drv <- createDriver HSDriver
     { hsdName     = "HS"
     , hsdIdentify = return . BS.isPrefixOf "HS:"
-    , hsdOpen     = doOpen
+    , hsdOpen     = doOpen (compile compiler)
     }
   mapM_ (\(k,v) -> setMetadataItem Nothing k v drv) meta
   registerDriver drv
@@ -36,23 +38,22 @@ mkDriver = do
            , ("DMD_EXTENSION", "hs")
            ]
 
-    doOpen arg = case BS.split ':' arg of
+    doOpen compile' arg = case BS.split ':' arg of
       ["HS", modOrSrc]        -> loadMod modOrSrc []
       ["HS", query, modOrSrc] -> loadMod modOrSrc (parseQueryText query)
       _                       -> return HsdError
-
-    loadMod modOrSrc query = do
-      let modName = BS.unpack $
-                fromMaybe modOrSrc (BS.stripSuffix ".hs" modOrSrc)
-          (mSymName, query') = popArg "variable" query
-          symName = maybe "dataset" T.unpack mSymName
-      eSym <- interpretWith (def {envImports =[ "GDAL.Plugin" ]})
-        [modName] ("SomeHSDatasetFactory " ++ symName)
-      case eSym of
-        Right factory -> return (HsdDataset (getFactory factory query))
-        Left error  -> do
-          T.hPutStrLn stderr error
-          return HsdError
+      where
+        loadMod modOrSrc query = do
+          let modName = BS.unpack $
+                    fromMaybe modOrSrc (BS.stripSuffix ".hs" modOrSrc)
+              (mSymName, query') = popArg "variable" query
+              symName = maybe "dataset" T.unpack mSymName
+          eSym <- compile' [modName] ("GDAL.Plugin.SomeHSDatasetFactory " ++ symName)
+          case eSym of
+            Success factory _ -> return (HsdDataset (getFactory factory query))
+            Failure _ messages  -> do
+              T.hPutStrLn stderr messages
+              return HsdError
 
 popArg :: Eq a => a -> [(a, Maybe b)] -> (Maybe b, [(a, Maybe b)])
 popArg key query = (join (lookup key query), filter ((==key) . fst) query)

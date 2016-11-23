@@ -1,15 +1,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE GADTs #-}
 module GDAL.Plugin.Compiler (
-    EvalEnv (..)
-  , interpret
-  , interpretWith
+    CompilerEnv (..)
+  , Compiler
+  , Result (..)
+  , startCompilerWith
+  , startCompiler
+  , stopCompiler
+  , compile
 ) where
 
-import Control.Exception (IOException, Handler(Handler), catches)
+import Control.Concurrent
+import Control.Concurrent.Chan
+import Control.Concurrent.MVar
+import Control.Exception ( IOException, Handler(Handler), catches
+                         , SomeException )
 import Control.Monad (void)
---import Control.Monad.IO.Class ( liftIO )
+import Control.Monad.IO.Class ( liftIO )
 import Data.Char (isDigit)
 import Data.Text (Text)
 import Data.String (fromString)
@@ -28,37 +37,61 @@ import Outputable as GHC hiding (parens)
 import DynFlags as GHC
 import GHC.Exts (unsafeCoerce#)
 
-data EvalEnv
- = EvalEnv {
+data Compiler = Compiler
+  { compilerTid  :: ThreadId
+  , compilerChan :: Chan Request
+  }
+
+data CompilerEnv
+ = CompilerEnv {
      envLibdir      :: FilePath
    , envImports     :: [String]
    , envSearchPath  :: [FilePath]
    } deriving (Show)
 
-
-instance Default EvalEnv where
-  def = EvalEnv
+instance Default CompilerEnv where
+  def = CompilerEnv
     { envLibdir     = libdir
     , envImports    = []
     , envSearchPath = ["."]
     }
 
-addOptl :: String -> DynFlags -> DynFlags
-addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
+data Request where
+  Compile :: forall a. Typeable a
+          => [String]
+          -> String
+          -> MVar (Result a)
+          -> Request
 
-alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
-alterSettings f dflags = dflags { settings = f (settings dflags) }
+type CompilerMessages = Text
 
-interpret
+data Result a where
+  Success :: a             -> CompilerMessages -> Result a
+  Failure :: SomeException -> CompilerMessages -> Result a
+
+
+startCompiler :: IO (Either String Compiler)
+startCompiler = startCompilerWith def
+
+startCompilerWith :: CompilerEnv -> IO (Either String Compiler)
+startCompilerWith = undefined
+
+stopCompiler :: Compiler -> IO (Either String ())
+stopCompiler = undefined
+
+compile
   :: forall a. Typeable a
-  => [String]
+  => Compiler
+  -> [String]
   -> String
-  -> IO (Either Text a)
-interpret = interpretWith def
+  -> IO (Result a)
+compile = undefined
 
+
+{-
 interpretWith
   :: forall a. Typeable a
-  => EvalEnv
+  => CompilerEnv
   -> [String]
   -> String
   -> IO (Either Text a)
@@ -103,6 +136,9 @@ interpretWith env targets code = do
       , Handler (\(e :: IOException) -> handleEx (show e))
     ]
 
+-}
+
+
 importModules:: [String] -> Ghc ()
 importModules =
   GHC.setContext . map (GHC.IIDecl . import_)
@@ -110,7 +146,6 @@ importModules =
     import_ name =
       ( GHC.simpleImportDecl . GHC.mkModuleName $ name )
       { GHC.ideclQualified = False }
-
 
 --
 -- |stolen from hint
@@ -129,3 +164,10 @@ mkGhcError :: (GHC.SDoc -> String) -> GHC.Severity -> GHC.SrcSpan -> GHC.PprStyl
 mkGhcError render severity src_span style msg = fromString niceErrMsg
     where niceErrMsg = render . GHC.withPprStyle style $
                          GHC.mkLocMessage severity src_span msg
+
+addOptl :: String -> DynFlags -> DynFlags
+addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
+
+alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
+alterSettings f dflags = dflags { settings = f (settings dflags) }
+
