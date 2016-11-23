@@ -2,7 +2,7 @@
 module GDAL.Plugin.Driver ( mkDriver, registerDriver, installDriver ) where
 
 import           GDAL.Plugin.Types
-import           GDAL.Plugin.Compiler ( EvalEnv(..), interpretWithEnv )
+import           GDAL.Plugin.Compiler ( interpretWith, envImports )
 
 import           GDAL
 import           GDAL.Internal.HSDriver
@@ -46,12 +46,8 @@ mkDriver = do
                 fromMaybe modOrSrc (BS.stripSuffix ".hs" modOrSrc)
           (mSymName, query') = popArg "variable" query
           symName = maybe "dataset" T.unpack mSymName
-      eSym <- interpretWithEnv
-                (def { envTargets = [ modName ]
-                     , envSearchPath = [ "." ]
-                     , envImports = [ modName, "GDAL.Plugin" ]
-                     })
-        ("SomeHSDatasetFactory " ++ symName)
+      eSym <- interpretWith (def {envImports =[ "GDAL.Plugin" ]})
+        [modName] ("SomeHSDatasetFactory " ++ symName)
       case eSym of
         Right factory -> return (HsdDataset (getFactory factory query))
         Left error  -> do

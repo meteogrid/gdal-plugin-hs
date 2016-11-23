@@ -4,18 +4,18 @@
 module GDAL.Plugin.Compiler (
     EvalEnv (..)
   , interpret
-  , interpretWithEnv
+  , interpretWith
 ) where
 
 import Control.Exception (IOException, Handler(Handler), catches)
 import Control.Monad (void)
-import Control.Monad.IO.Class ( liftIO )
+--import Control.Monad.IO.Class ( liftIO )
 import Data.Char (isDigit)
 import Data.Text (Text)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
-import Data.Text.Lazy.Builder (Builder, toLazyText , fromText)
+import Data.Text.Lazy.Builder (Builder, toLazyText)
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef)
 import Data.Typeable (Typeable, typeOf)
 import Data.Monoid (mempty, mappend)
@@ -26,53 +26,49 @@ import ErrUtils as GHC
 import HscTypes as GHC
 import Outputable as GHC hiding (parens)
 import DynFlags as GHC
-import System.IO.Temp (withSystemTempDirectory)
 import GHC.Exts (unsafeCoerce#)
 
 data EvalEnv
  = EvalEnv {
      envLibdir      :: FilePath
-   , envTmpDirTpl   :: FilePath
-   , envSearchPath  :: [FilePath]
    , envImports     :: [String]
-   , envTargets     :: [String]
+   , envSearchPath  :: [FilePath]
    } deriving (Show)
 
 
 instance Default EvalEnv where
-  def
-    = EvalEnv {
-        envLibdir      = libdir
-      , envTmpDirTpl   = ".gdal-hs"
-      , envSearchPath  = []
-      , envImports     = []
-      , envTargets     = []
-      }
+  def = EvalEnv
+    { envLibdir     = libdir
+    , envImports    = []
+    , envSearchPath = ["."]
+    }
 
-addOptl   f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
+addOptl :: String -> DynFlags -> DynFlags
+addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
 
 alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
 alterSettings f dflags = dflags { settings = f (settings dflags) }
 
 interpret
   :: forall a. Typeable a
-  => String
-  -> IO (Either Text a)
-interpret = interpretWithEnv def
-
-interpretWithEnv
-  :: forall a. Typeable a
-  => EvalEnv
+  => [String]
   -> String
   -> IO (Either Text a)
-interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
+interpret = interpretWith def
+
+interpretWith
+  :: forall a. Typeable a
+  => EvalEnv
+  -> [String]
+  -> String
+  -> IO (Either Text a)
+interpretWith env targets code = do
   logRef <- newIORef mempty :: (IO (IORef Builder))
   let compileAndLoad = do
         dflags <- getSessionDynFlags
         let dflags' = updateWays
                     . dynamicTooMkDynamicDynFlags
                     . updOptLevel 2
-                    . setTmpDir dir
                     . addOptl "-lHSrts_thr-ghc8.0.1"
                     -- . setGeneralFlag' Opt_WarnIsError
                     . flip (foldl wopt_set) [toEnum 0 ..] -- sets all warnings
@@ -92,13 +88,11 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
                       , verbosity     = 1
                       }
         void $ setSessionDynFlags dflags'
-        defaultCleanupHandler dflags' $ do
-          targets <- mapM (`guessTarget` Nothing) (envTargets env)
-          setTargets targets
-          void $ load LoadAllTargets
-          importModules (envImports env)
-          fmap (Right . unsafeCoerce#) $
-            compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a))
+        setTargets =<< mapM (`guessTarget` Nothing) targets
+        void $ load LoadAllTargets
+        importModules (envImports env ++ targets)
+        fmap (Right . unsafeCoerce#) $
+          compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a))
       handleEx e = do
         msg <- LT.toStrict . toLazyText <$> readIORef logRef
         return $ Left (if not (T.null msg) then msg else T.pack e)
@@ -108,8 +102,6 @@ interpretWithEnv env code = withSystemTempDirectory tpl $ \dir -> do
       , Handler (\(e :: GhcApiError) -> handleEx (show e))
       , Handler (\(e :: IOException) -> handleEx (show e))
     ]
-  where
-    tpl = envTmpDirTpl env
 
 importModules:: [String] -> Ghc ()
 importModules =
@@ -126,10 +118,11 @@ parens :: String -> String
 parens s = concat ["(let {", foo, " =\n", s, "\n;} in ", foo, ")"]
   where foo = "e_1" ++ filter isDigit s
 
+mkLogHandler :: IORef Builder -> DynFlags -> t -> Severity -> SrcSpan -> PprStyle -> MsgDoc -> IO ()
 mkLogHandler r df _ severity src style msg =
     let renderErrMsg = GHC.showSDoc df
         errorEntry = mkGhcError renderErrMsg severity src style msg
-    in modifyIORef r (flip mappend (mappend errorEntry "\n"))
+    in modifyIORef r (`mappend` mappend errorEntry "\n")
 
 
 mkGhcError :: (GHC.SDoc -> String) -> GHC.Severity -> GHC.SrcSpan -> GHC.PprStyle -> GHC.MsgDoc -> Builder
