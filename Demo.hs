@@ -1,12 +1,14 @@
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE QuasiQuotes #-}
 module Demo where
 
 import GDAL.Plugin
 import Data.Int
+import Sigym4.Dimension
 
-openDataset = mapExisting chorrada -- (id @Int16 )
+times = [cron|0 0 * * *|]
 
-chorrada :: Int16 -> Float
-chorrada v
-  | v>(-1) && v-1000 > (-1) = fromIntegral v - 1000 * 1.7
-  | otherwise               = fromIntegral v * 2    * 0.4
+dataset :: HSDatasetFactory
+dataset = mapExisting chorrada
+
+chorrada :: Int16 -> Int16
+chorrada = subtract 5 . max 5 

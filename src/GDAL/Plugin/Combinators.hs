@@ -46,7 +46,7 @@ mapExistingWith
   => (forall s. QueryText -> GDAL s (RODataset s a))
   -> (a -> b)
   -> HSDatasetFactory
-mapExistingWith opener fun = HSDatasetFactory $ \query -> do
+mapExistingWith opener fun query = do
   dsIn <- opener query :: GDAL s (RODataset s a)
   srsIn <- datasetProjection dsIn
   gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> datasetGeotransform dsIn

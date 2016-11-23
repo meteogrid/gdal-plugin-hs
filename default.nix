@@ -26,6 +26,16 @@
       gdalinfo --formats | grep Haskell
       '';
 
+    shellHook = ''
+      export GDAL_DRIVER_PATH="$(pwd)/dso:$GDAL_DRIVER_PATH"
+
+      # Para que el compilador encuentre los paquetes y funcione ghc-mod
+      export NIX_GHC="${ghc}/bin/ghc"
+      export NIX_GHCPKG="${ghc}/bin/ghc-pkg"
+      export NIX_GHC_DOCDIR="${ghc}/share/doc/ghc/html"
+      export NIX_GHC_LIBDIR="${ghc}/lib/ghc-${ghc.version}"
+      '';
+
     meta = {
       description = "GDAL which embeds GHC";
       homepage = https://github.com/meteogrid/gdal-plugin-hs;
