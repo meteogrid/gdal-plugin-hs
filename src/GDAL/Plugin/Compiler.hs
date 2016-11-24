@@ -5,7 +5,6 @@
 {-# LANGUAGE GADTs #-}
 module GDAL.Plugin.Compiler (
     CompilerConfig (..)
-  , Linkage (..)
   , Compiler
   , Result (..)
   , startCompilerWith
@@ -46,14 +45,11 @@ data Compiler = Compiler
   , compilerChan :: Chan Request
   }
 
-data Linkage = LinkDyn | LinkRTS
-  deriving Show
 
 data CompilerConfig = CompilerConfig
   { cfgLibdir      :: FilePath
   , cfgImports     :: [String]
   , cfgSearchPath  :: [FilePath]
-  , cfgLinkage     :: Linkage
   , cfgOptions     :: [String]
   , cfgSafeModeOn  :: Bool
   } deriving Show
@@ -63,7 +59,6 @@ instance Default CompilerConfig where
     { cfgLibdir     = libdir
     , cfgImports    = []
     , cfgSearchPath = ["."]
-    , cfgLinkage    = LinkRTS
     , cfgOptions    = defaultGhcOptions
     , cfgSafeModeOn = True 
     }
@@ -112,10 +107,10 @@ compilerThread chan cfg = do
   runGhc (Just (cfgLibdir cfg)) $ do
     dflags <- getSessionDynFlags
     let dflags' = updOptLevel 2
-                . case cfgLinkage cfg of
-                    LinkDyn -> addOptl "-lHSrts_thr-ghc8.0.1"
-                             . dynamicTooMkDynamicDynFlags
-                    LinkRTS -> id
+                . (if GHC.dynamicGhc
+                  then addOptl "-lHSrts_thr-ghc8.0.1"
+                     . dynamicTooMkDynamicDynFlags
+                  else id)
                 $ dflags {
                     mainFunIs     = Nothing
                   , safeHaskell   = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
