@@ -54,6 +54,7 @@ data CompilerConfig = CompilerConfig
   , cfgImports     :: [String]
   , cfgSearchPath  :: [FilePath]
   , cfgLinkage     :: Linkage
+  , cfgOptions     :: [String]
   } deriving Show
 
 instance Default CompilerConfig where
@@ -62,6 +63,7 @@ instance Default CompilerConfig where
     , cfgImports    = []
     , cfgSearchPath = ["."]
     , cfgLinkage    = LinkRTS
+    , cfgOptions    = defaultGhcOptions
     }
 
 data Request where
@@ -73,9 +75,10 @@ data Request where
 
 type CompilerMessages = Text
 
-data Result a where
-  Success :: a             -> CompilerMessages -> Result a
-  Failure :: SomeException -> CompilerMessages -> Result a
+data Result a
+  = Success a             CompilerMessages
+  | Failure SomeException CompilerMessages
+  deriving Show
 
 
 startCompiler :: IO Compiler
@@ -127,7 +130,7 @@ compilerThread chan cfg = do
                   , verbosity     = 0
                   }
     void $ setSessionDynFlags dflags'
-    setGhcOptions defaultGhcOptions
+    setGhcOptions (cfgOptions cfg)
     forever $ do
       req <- liftIO (readChan chan)
       case req of
