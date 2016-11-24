@@ -1,15 +1,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE GADTs #-}
 module GDAL.Plugin.Compiler (
     CompilerEnv (..)
+  , Linkage (..)
   , Compiler
   , Result (..)
   , startCompilerWith
   , startCompiler
   , stopCompiler
   , compile
+  , def
 ) where
 
 import Control.Concurrent
@@ -43,11 +46,15 @@ data Compiler = Compiler
   , compilerChan :: Chan Request
   }
 
+data Linkage = LinkDyn | LinkRTS
+  deriving Show
+
 data CompilerEnv
  = CompilerEnv {
      envLibdir      :: FilePath
    , envImports     :: [String]
    , envSearchPath  :: [FilePath]
+   , envLinkage     :: Linkage
    } deriving (Show)
 
 instance Default CompilerEnv where
@@ -55,6 +62,7 @@ instance Default CompilerEnv where
     { envLibdir     = libdir
     , envImports    = []
     , envSearchPath = ["."]
+    , envLinkage    = LinkRTS
     }
 
 data Request where
@@ -100,9 +108,9 @@ compilerThread chan env = do
   runGhc (Just (envLibdir env)) $ do
     dflags <- getSessionDynFlags
     let dflags' = updateWays
-                . dynamicTooMkDynamicDynFlags
+                -- . dynamicTooMkDynamicDynFlags
                 . updOptLevel 2
-                . addOptl "-lHSrts_thr-ghc8.0.1"
+                . case envLinkage env of {LinkDyn -> addOptl "-lHSrts_thr-ghc8.0.1"; _ -> id}
                 -- . setGeneralFlag' Opt_WarnIsError
                 . flip (foldl wopt_set) [toEnum 0 ..] -- sets all warnings
                 $ dflags {
@@ -112,7 +120,7 @@ compilerThread chan env = do
                   , outputFile    = Nothing
                   , ghcLink       = LinkInMemory
                   , ghcMode       = CompManager
-                  , ways          = [ WayDyn, WayThreaded ]
+                  --, ways          = [ WayDyn, WayThreaded ]
                   , hscTarget     = HscAsm
                   --, objectDir     = Just dir
                   --, hiDir         = Just dir
@@ -135,28 +143,17 @@ compilerThread chan env = do
               Right r -> Success r msgs
               Left  e -> Failure e msgs
 
-{-
-  runGhc (Just (envLibdir env)) compileAndLoad `catches` [
-        Handler (\(e :: SourceError) -> handleEx (show e))
-      , Handler (\(e :: GhcApiError) -> handleEx (show e))
-      , Handler (\(e :: IOException) -> handleEx (show e))
-    ]
--}
-
-unloadTargets :: Ghc ()
-unloadTargets = do
- setTargets []
- void $ load LoadAllTargets
 
 compileTargets
   :: forall a. Typeable a
   => CompilerEnv -> [String] -> String -> Ghc a
 compileTargets env targets code = do
+  liftIO rts_revertCAFs -- make sure old modules can be unloaded
   setTargets =<< mapM (`guessTarget` Nothing) targets
   void $ load LoadAllTargets
   importModules (envImports env ++ targets)
   unsafeCoerce# <$>
-    (compileExpr $ parens code ++ " :: " ++ show (typeOf (undefined :: a)))
+    compileExpr (parens code ++ " :: " ++ show (typeOf (undefined :: a)))
 
 importModules:: [String] -> Ghc ()
 importModules =
@@ -190,3 +187,4 @@ addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
 alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
 alterSettings f dflags = dflags { settings = f (settings dflags) }
 
+foreign import ccall "revertCAFs" rts_revertCAFs  :: IO ()

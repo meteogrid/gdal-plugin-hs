@@ -14,11 +14,13 @@ import           Data.Maybe ( fromMaybe )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import           Network.HTTP.Types.URI ( parseQueryText )
-import           System.IO ( stderr )
+import           System.IO (hPrint, stderr)
 
-mkDriver :: IO (Driver ReadWrite)
-mkDriver = do
-  compiler <- startCompilerWith (def {envImports =[ "GDAL.Plugin" ]})
+
+mkDriver :: CompilerEnv -> IO (Driver ReadWrite)
+mkDriver env = do
+  let env' = env { envImports = "GDAL.Plugin":envImports env }
+  compiler <- startCompilerWith env'
   drv <- createDriver HSDriver
     { hsdName     = "HS"
     , hsdIdentify = return . BS.isPrefixOf "HS:"
@@ -45,8 +47,11 @@ mkDriver = do
               symName = maybe "dataset" T.unpack mSymName
           eSym <- compile' [modName] ("GDAL.Plugin.SomeHSDatasetFactory " ++ symName)
           case eSym of
-            Success factory _ -> return (HsdDataset (getFactory factory query))
-            Failure _ messages  -> do
+            Success factory messages -> do
+              T.hPutStrLn stderr messages
+              return (HsdDataset (getFactory factory query))
+            Failure exc messages  -> do
+              hPrint stderr exc
               T.hPutStrLn stderr messages
               return HsdError
 
