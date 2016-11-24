@@ -17,10 +17,10 @@ import           Network.HTTP.Types.URI ( parseQueryText )
 import           System.IO (hPrint, stderr)
 
 
-mkDriver :: CompilerEnv -> IO (Driver ReadWrite)
-mkDriver env = do
-  let env' = env { envImports = "GDAL.Plugin":envImports env }
-  compiler <- startCompilerWith env'
+mkDriver :: CompilerConfig -> IO (Driver ReadWrite)
+mkDriver cfg = do
+  let cfg' = cfg { cfgImports = "GDAL.Plugin":cfgImports cfg }
+  compiler <- startCompilerWith cfg'
   drv <- createDriver HSDriver
     { hsdName     = "HS"
     , hsdIdentify = return . BS.isPrefixOf "HS:"

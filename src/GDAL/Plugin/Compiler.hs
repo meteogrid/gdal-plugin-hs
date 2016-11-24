@@ -4,7 +4,7 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE GADTs #-}
 module GDAL.Plugin.Compiler (
-    CompilerEnv (..)
+    CompilerConfig (..)
   , Linkage (..)
   , Compiler
   , Result (..)
@@ -49,19 +49,19 @@ data Compiler = Compiler
 data Linkage = LinkDyn | LinkRTS
   deriving Show
 
-data CompilerEnv = CompilerEnv
-  { envLibdir      :: FilePath
-  , envImports     :: [String]
-  , envSearchPath  :: [FilePath]
-  , envLinkage     :: Linkage
+data CompilerConfig = CompilerConfig
+  { cfgLibdir      :: FilePath
+  , cfgImports     :: [String]
+  , cfgSearchPath  :: [FilePath]
+  , cfgLinkage     :: Linkage
   } deriving Show
 
-instance Default CompilerEnv where
-  def = CompilerEnv
-    { envLibdir     = libdir
-    , envImports    = []
-    , envSearchPath = ["."]
-    , envLinkage    = LinkRTS
+instance Default CompilerConfig where
+  def = CompilerConfig
+    { cfgLibdir     = libdir
+    , cfgImports    = []
+    , cfgSearchPath = ["."]
+    , cfgLinkage    = LinkRTS
     }
 
 data Request where
@@ -81,10 +81,10 @@ data Result a where
 startCompiler :: IO Compiler
 startCompiler = startCompilerWith def
 
-startCompilerWith :: CompilerEnv -> IO Compiler
-startCompilerWith env = do
+startCompilerWith :: CompilerConfig -> IO Compiler
+startCompilerWith cfg = do
   chan <- newChan
-  tid <- forkIO (compilerThread chan env)
+  tid <- forkIO (compilerThread chan cfg)
   return (Compiler tid chan)
 
 stopCompiler :: Compiler -> IO ()
@@ -101,13 +101,13 @@ compile comp targets code = do
   writeChan (compilerChan comp) (Compile targets code resRef)
   takeMVar resRef
 
-compilerThread :: Chan Request -> CompilerEnv -> IO ()
-compilerThread chan env = do
-  logRef <- newIORef mempty :: (IO (IORef Builder))
-  runGhc (Just (envLibdir env)) $ do
+compilerThread :: Chan Request -> CompilerConfig -> IO ()
+compilerThread chan cfg = do
+  logRef <- newIORef mempty
+  runGhc (Just (cfgLibdir cfg)) $ do
     dflags <- getSessionDynFlags
     let dflags' = updOptLevel 2
-                . case envLinkage env of
+                . case cfgLinkage cfg of
                     LinkDyn -> addOptl "-lHSrts_thr-ghc8.0.1"
                              . dynamicTooMkDynamicDynFlags
                     LinkRTS -> id
@@ -122,7 +122,7 @@ compilerThread chan env = do
                   , hscTarget     = HscAsm
                   --, objectDir     = Just dir
                   --, hiDir         = Just dir
-                  , importPaths   = envSearchPath env
+                  , importPaths   = cfgSearchPath cfg
                   , log_action    = mkLogHandler logRef
                   , verbosity     = 0
                   }
@@ -133,7 +133,7 @@ compilerThread chan env = do
       case req of
         Compile targets code resRef -> do
           liftIO (writeIORef logRef mempty)
-          eRes <- gtry (compileTargets env targets code)
+          eRes <- gtry (compileTargets cfg targets code)
           liftIO $ do
             msgs <- LT.toStrict . toLazyText
                 <$> readIORef logRef
@@ -151,12 +151,12 @@ defaultGhcOptions = [ "-fwarn-incomplete-patterns"
                     ]
 compileTargets
   :: forall a. Typeable a
-  => CompilerEnv -> [String] -> String -> Ghc a
-compileTargets env targets code = do
+  => CompilerConfig -> [String] -> String -> Ghc a
+compileTargets cfg targets code = do
   liftIO rts_revertCAFs -- make sure old modules can be unloaded
   setTargets =<< mapM (`guessTarget` Nothing) targets
   void $ load LoadAllTargets
-  importModules (envImports env ++ targets)
+  importModules (cfgImports cfg ++ targets)
   unsafeCoerce# <$>
     compileExpr (parens code ++ " :: " ++ show (typeOf (undefined :: a)))
 
