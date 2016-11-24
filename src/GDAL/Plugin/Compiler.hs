@@ -21,7 +21,7 @@ import Control.Concurrent.MVar
 import Control.Exception ( IOException, Handler(Handler), catches
                          , SomeException )
 import Control.Monad (void, forever)
-import Control.Monad.IO.Class ( liftIO )
+import Control.Monad.IO.Class ( MonadIO (..) )
 import Data.Char (isDigit)
 import Data.Text (Text)
 import Data.String (fromString)
@@ -121,30 +121,31 @@ compilerThread chan cfg = do
                   , outputFile    = Nothing
                   , ghcLink       = LinkInMemory
                   , ghcMode       = CompManager
-                  --, ways          = [ WayDyn, WayThreaded ]
                   , hscTarget     = HscAsm
-                  --, objectDir     = Just dir
-                  --, hiDir         = Just dir
                   , importPaths   = cfgSearchPath cfg
                   , log_action    = mkLogHandler logRef
                   , verbosity     = 0
                   }
-    void $ setSessionDynFlags dflags'
-    setGhcOptions (cfgOptions cfg)
+    setGhcOptions dflags' (cfgOptions cfg)
     forever $ do
       req <- liftIO (readChan chan)
       case req of
         Compile targets code resRef -> do
-          liftIO (writeIORef logRef mempty)
-          eRes <- gtry (compileTargets cfg targets code)
-          liftIO $ do
-            msgs <- LT.toStrict . toLazyText
-                <$> readIORef logRef
-            writeIORef logRef mempty
-            putMVar resRef $ case eRes of
-              Right r -> Success r msgs
-              Left  e -> Failure e msgs
+          (eRes, msgs) <- capturingMessages logRef $
+                          gtry (compileTargets cfg targets code)
+          liftIO . putMVar resRef $ case eRes of
+            Right r -> Success r msgs
+            Left  e -> Failure e msgs
 
+
+capturingMessages :: MonadIO m => IORef Builder -> m a -> m (a, CompilerMessages)
+capturingMessages logRef act = do
+  liftIO (writeIORef logRef mempty) -- in case act threw an exception on a prev. call
+  r <- act
+  liftIO $ do
+    msgs <- LT.toStrict . toLazyText <$> readIORef logRef
+    writeIORef logRef mempty
+    return (r, msgs)
 
 defaultGhcOptions :: [String]
 defaultGhcOptions = [ "-fwarn-incomplete-patterns"
@@ -195,9 +196,8 @@ addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
 alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
 alterSettings f dflags = dflags { settings = f (settings dflags) }
 
-setGhcOptions :: [String] -> Ghc ()
-setGhcOptions opts = do
-  old_flags <- GHC.getSessionDynFlags
+setGhcOptions :: DynFlags -> [String] -> Ghc ()
+setGhcOptions old_flags opts = do
   (new_flags,not_parsed) <- pdf old_flags opts
   void $ GHC.setSessionDynFlags (updateWays new_flags)
   where
