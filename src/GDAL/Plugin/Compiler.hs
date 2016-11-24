@@ -55,6 +55,7 @@ data CompilerConfig = CompilerConfig
   , cfgSearchPath  :: [FilePath]
   , cfgLinkage     :: Linkage
   , cfgOptions     :: [String]
+  , cfgSafeModeOn  :: Bool
   } deriving Show
 
 instance Default CompilerConfig where
@@ -64,6 +65,7 @@ instance Default CompilerConfig where
     , cfgSearchPath = ["."]
     , cfgLinkage    = LinkRTS
     , cfgOptions    = defaultGhcOptions
+    , cfgSafeModeOn = True 
     }
 
 data Request where
@@ -116,7 +118,7 @@ compilerThread chan cfg = do
                     LinkRTS -> id
                 $ dflags {
                     mainFunIs     = Nothing
-                  , safeHaskell   = Sf_Safe
+                  , safeHaskell   = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
                   , outputHi      = Nothing
                   , outputFile    = Nothing
                   , ghcLink       = LinkInMemory

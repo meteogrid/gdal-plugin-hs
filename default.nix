@@ -6,6 +6,36 @@
             pkgs.gdal-plugin-hs
             pkgs.bindings-gdal
             ] ++ extraPackages pkgs);
+
+        testProgram = builtins.toFile "TestDataset.hs" ''
+          module TestDataset where
+          import GDAL
+          import OSR ( srsFromEPSG )
+          import GDAL.Plugin
+          import GDAL.Internal.HSDataset
+          import qualified Data.Vector.Storable as St
+
+          dataset :: HSDatasetFactory
+          dataset _ = return HSDataset
+            { rasterSize   = 2560 :+: 1280
+            , bands        = rasterBands
+            , srs          = Just epsg4326
+            , geotransform = Geotransform 0 0.001 0 0 0 0.001
+            }
+            where
+              Right epsg4326 = srsFromEPSG 4326
+              -- We need to type the answer so the correct band GDALDatatype can
+              -- be inferred
+              answer :: Double
+              answer = 42
+              rasterBands = [
+                HSRasterBand
+                  { blockSize = 128 :+: 256
+                  , nodata = Just 5
+                  , readBlock = const (return (St.replicate (128*256) answer))
+                  }
+                ]
+          '';
     in stdenv.mkDerivation rec {
       version = "1.0";
       shortname = "gdal-plugin-hs-dso";
@@ -13,11 +43,9 @@
 
       src = ./dso;
 
-      buildInputs = [
-        gdal
-        ghc
-      ];
+      buildInputs = [ gdal ghc ];
 
+      propagatedBuildInputs = [ gdal ghc ];
 
       patchPhase = "make clean";
 
@@ -31,10 +59,24 @@
       checkPhase = ''
         export GDAL_DRIVER_PATH="$(pwd)"
         gdalinfo --formats | grep Haskell
+
+        export NIX_GHC="${ghc}/bin/ghc"
+        export NIX_GHCPKG="${ghc}/bin/ghc-pkg"
+        export NIX_GHC_DOCDIR="${ghc}/share/doc/ghc/html"
+        export NIX_GHC_LIBDIR="${ghc}/lib/ghc-${ghc.version}"
+
+        cp ${testProgram} TestDataset.hs
+        export GDAL_PLUGIN_HS_UNSAFE=YES
+        echo $GDAL_DRIVER_PATH
+        output=$(gdalinfo -stats HS:TestDataset)
+        echo $output | grep -q "WGS_1984"
+        echo $output | grep -q "NoData Value=5"
+        echo $output \
+          | grep -q "Minimum=42.000, Maximum=42.000, Mean=42.000, StdDev=0.000"
         '';
 
       shellHook = ''
-        export GDAL_DRIVER_PATH="$(pwd)/dso:$GDAL_DRIVER_PATH"
+        export GDAL_DRIVER_PATH="$(pwd):$GDAL_DRIVER_PATH"
 
         # Para que el compilador encuentre los paquetes y funcione ghc-mod
         export NIX_GHC="${ghc}/bin/ghc"
