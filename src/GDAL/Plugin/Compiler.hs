@@ -36,7 +36,7 @@ import GHC hiding (importPaths)
 import GHC.Paths (libdir)
 import ErrUtils as GHC
 import HscTypes as GHC
-import Exception ( gtry )
+import Exception ( ExceptionMonad, gtry, gmask )
 import Outputable as GHC hiding (parens)
 import DynFlags as GHC
 import GHC.Exts (unsafeCoerce#)
@@ -130,18 +130,23 @@ compilerThread chan cfg = do
     forever $ do
       req <- liftIO (readChan chan)
       case req of
-        Compile targets code resRef -> do
-          (eRes, msgs) <- capturingMessages logRef $
-                          gtry (compileTargets cfg targets code)
+        Compile targets code resRef -> gmask $ \restore -> do
+          -- gmask to make sure we're not interrupted before putting the result
+          -- in the mvar so the requester does not hang (or throw a
+          -- "blocked indefinetely on an mvar" exception)
+          (eRes, msgs) <- capturingMessages logRef restore $
+                          compileTargets cfg targets code
           liftIO . putMVar resRef $ case eRes of
             Right r -> Success r msgs
             Left  e -> Failure e msgs
 
 
-capturingMessages :: MonadIO m => IORef Builder -> m a -> m (a, CompilerMessages)
-capturingMessages logRef act = do
-  liftIO (writeIORef logRef mempty) -- in case act threw an exception on a prev. call
-  r <- act
+capturingMessages
+  :: (MonadIO m, ExceptionMonad m)
+  => IORef Builder -> (m a -> m a) -> m a
+  -> m (Either SomeException a, CompilerMessages)
+capturingMessages logRef restore act = do
+  r <- gtry (restore act)
   liftIO $ do
     msgs <- LT.toStrict . toLazyText <$> readIORef logRef
     writeIORef logRef mempty
