@@ -49,13 +49,12 @@ data Compiler = Compiler
 data Linkage = LinkDyn | LinkRTS
   deriving Show
 
-data CompilerEnv
- = CompilerEnv {
-     envLibdir      :: FilePath
-   , envImports     :: [String]
-   , envSearchPath  :: [FilePath]
-   , envLinkage     :: Linkage
-   } deriving (Show)
+data CompilerEnv = CompilerEnv
+  { envLibdir      :: FilePath
+  , envImports     :: [String]
+  , envSearchPath  :: [FilePath]
+  , envLinkage     :: Linkage
+  } deriving Show
 
 instance Default CompilerEnv where
   def = CompilerEnv
@@ -107,12 +106,11 @@ compilerThread chan env = do
   logRef <- newIORef mempty :: (IO (IORef Builder))
   runGhc (Just (envLibdir env)) $ do
     dflags <- getSessionDynFlags
-    let dflags' = updateWays
-                -- . dynamicTooMkDynamicDynFlags
-                . updOptLevel 2
-                . case envLinkage env of {LinkDyn -> addOptl "-lHSrts_thr-ghc8.0.1"; _ -> id}
-                -- . setGeneralFlag' Opt_WarnIsError
-                . flip (foldl wopt_set) [toEnum 0 ..] -- sets all warnings
+    let dflags' = updOptLevel 2
+                . case envLinkage env of
+                    LinkDyn -> addOptl "-lHSrts_thr-ghc8.0.1"
+                             . dynamicTooMkDynamicDynFlags
+                    LinkRTS -> id
                 $ dflags {
                     mainFunIs     = Nothing
                   , safeHaskell   = Sf_Safe
@@ -126,9 +124,10 @@ compilerThread chan env = do
                   --, hiDir         = Just dir
                   , importPaths   = envSearchPath env
                   , log_action    = mkLogHandler logRef
-                  , verbosity     = 1
+                  , verbosity     = 0
                   }
     void $ setSessionDynFlags dflags'
+    setGhcOptions defaultGhcOptions
     forever $ do
       req <- liftIO (readChan chan)
       case req of
@@ -144,6 +143,12 @@ compilerThread chan env = do
               Left  e -> Failure e msgs
 
 
+defaultGhcOptions :: [String]
+defaultGhcOptions = [ "-fwarn-incomplete-patterns"
+                    , "-fwarn-incomplete-uni-patterns"
+                    , "-funbox-strict-fields"
+                    , "-Wall"
+                    ]
 compileTargets
   :: forall a. Typeable a
   => CompilerEnv -> [String] -> String -> Ghc a
@@ -186,5 +191,14 @@ addOptl f = alterSettings (\s -> s { sOpt_l   = f : sOpt_l s})
 
 alterSettings :: (Settings -> Settings) -> DynFlags -> DynFlags
 alterSettings f dflags = dflags { settings = f (settings dflags) }
+
+setGhcOptions :: [String] -> Ghc ()
+setGhcOptions opts = do
+  old_flags <- GHC.getSessionDynFlags
+  (new_flags,not_parsed) <- pdf old_flags opts
+  void $ GHC.setSessionDynFlags (updateWays new_flags)
+  where
+    pdf d = fmap firstTwo . GHC.parseDynamicFlags d . map GHC.noLoc
+    firstTwo (a,b,_) = (a, map GHC.unLoc b)
 
 foreign import ccall "revertCAFs" rts_revertCAFs  :: IO ()
