@@ -1,6 +1,6 @@
 GHC = ghc
 CXX = g++
-LIBS=-lHSrts_thr-ghc8.0.1 -lCffi
+LIBS=-lHSrts_thr-ghc8.0.1 -lCffi_thr -lrt
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS)

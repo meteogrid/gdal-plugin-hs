@@ -13,7 +13,7 @@ static void GDALHSUnload (GDALDriver* )
 {
   // it is safe to call even if haskell unloads the driver since only the
   // outermost call will exit the rts
-  hs_exit();
+  //hs_exit();
 }
 
 

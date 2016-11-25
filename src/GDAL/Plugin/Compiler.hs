@@ -112,8 +112,7 @@ compilerThread chan cfg = do
   logRef <- newIORef mempty
   runGhc (Just (cfgLibdir cfg)) $ do
     dflags <- getSessionDynFlags
-    let dflags' = updOptLevel 2
-                . (if GHC.dynamicGhc
+    let dflags' = (if False && GHC.dynamicGhc
                   then addOptl "-lHSrts_thr-ghc8.0.1"
                      . dynamicTooMkDynamicDynFlags
                   else id)
@@ -122,7 +121,8 @@ compilerThread chan cfg = do
                   , safeHaskell = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
                   , ghcLink     = LinkInMemory
                   , ghcMode     = CompManager
-                  , hscTarget   = HscAsm
+                  , hscTarget   = HscInterpreted
+                  , ways        = ways dflags ++ [ WayThreaded ]
                   , importPaths = cfgSearchPath cfg
                   , log_action  = mkLogHandler logRef
                   , verbosity   = cfgVerbosity cfg
@@ -161,9 +161,10 @@ defaultGhcOptions = [ "-fwarn-incomplete-patterns"
                     , "-fwarn-incomplete-uni-patterns"
                     , "-funbox-strict-fields"
                     , "-Wall"
-                    , "-fexpose-all-unfoldings"
-                    , "-funfolding-use-threshold500"
-                    , "-funfolding-keeness-factor500"
+                    , "-O"
+                    --, "-fexpose-all-unfoldings"
+                    --, "-funfolding-use-threshold500"
+                    --, "-funfolding-keeness-factor500"
                     ]
 compileTargets
   :: forall a. Typeable a

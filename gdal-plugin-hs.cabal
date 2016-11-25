@@ -20,11 +20,16 @@ library
                      , GDAL.Plugin.Compiler
                      , GDAL.Plugin.Driver
                      , GDAL.Plugin.Combinators
+                     , GDAL.Plugin.CombinatorsAcc
                      , GDAL.Plugin.Types
   build-depends:
       base >=4.9 && <4.10
     , bytestring
     , bindings-gdal
+    , accelerate
+    , accelerate-llvm-native
+    , accelerate-llvm-ptx
+    , accelerate-io
     , deepseq
     , vector
     , temporary
