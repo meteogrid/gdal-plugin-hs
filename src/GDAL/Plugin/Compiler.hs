@@ -39,10 +39,11 @@ import Exception ( ExceptionMonad, gtry, gmask )
 import Outputable as GHC hiding (parens)
 import DynFlags as GHC
 import GHC.Exts (unsafeCoerce#)
+import System.Directory (removeDirectoryRecursive)
 
 data Compiler = Compiler
-  { compilerTid  :: ThreadId
-  , compilerChan :: Chan Request
+  { compilerTid       :: ThreadId
+  , compilerChan      :: Chan Request
   }
 
 
@@ -52,6 +53,8 @@ data CompilerConfig = CompilerConfig
   , cfgSearchPath  :: [FilePath]
   , cfgOptions     :: [String]
   , cfgSafeModeOn  :: Bool
+  , cfgVerbosity   :: Int
+  , cfgBuildDir    :: FilePath
   } deriving Show
 
 instance Default CompilerConfig where
@@ -61,6 +64,8 @@ instance Default CompilerConfig where
     , cfgSearchPath = ["."]
     , cfgOptions    = defaultGhcOptions
     , cfgSafeModeOn = True 
+    , cfgVerbosity  = 0
+    , cfgBuildDir   = "gdal-hs-build"
     }
 
 data Request where
@@ -90,6 +95,7 @@ startCompilerWith cfg = do
 stopCompiler :: Compiler -> IO ()
 stopCompiler = killThread . compilerTid
 
+
 compile
   :: forall a. Typeable a
   => Compiler
@@ -112,16 +118,17 @@ compilerThread chan cfg = do
                      . dynamicTooMkDynamicDynFlags
                   else id)
                 $ dflags {
-                    mainFunIs     = Nothing
-                  , safeHaskell   = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
-                  , outputHi      = Nothing
-                  , outputFile    = Nothing
-                  , ghcLink       = LinkInMemory
-                  , ghcMode       = CompManager
-                  , hscTarget     = HscAsm
-                  , importPaths   = cfgSearchPath cfg
-                  , log_action    = mkLogHandler logRef
-                  , verbosity     = 0
+                    mainFunIs   = Nothing
+                  , safeHaskell = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
+                  , ghcLink     = LinkInMemory
+                  , ghcMode     = CompManager
+                  , hscTarget   = HscAsm
+                  , importPaths = cfgSearchPath cfg
+                  , log_action  = mkLogHandler logRef
+                  , verbosity   = cfgVerbosity cfg
+                  , objectDir   = Just (cfgBuildDir cfg)
+                  , stubDir     = Just (cfgBuildDir cfg)
+                  , hiDir       = Just (cfgBuildDir cfg)
                   }
     setGhcOptions dflags' (cfgOptions cfg)
     forever $ do
@@ -154,6 +161,9 @@ defaultGhcOptions = [ "-fwarn-incomplete-patterns"
                     , "-fwarn-incomplete-uni-patterns"
                     , "-funbox-strict-fields"
                     , "-Wall"
+                    , "-fexpose-all-unfoldings"
+                    , "-funfolding-use-threshold500"
+                    , "-funfolding-keeness-factor500"
                     ]
 compileTargets
   :: forall a. Typeable a

@@ -22,3 +22,4 @@ a.out
 *.sw?
 *_stub.h
 result
+gdal-hs-build
