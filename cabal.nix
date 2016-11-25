@@ -1,7 +1,7 @@
 { mkDerivation, accelerate, accelerate-io, accelerate-llvm-native
 , accelerate-llvm-ptx, base, bindings-gdal, bytestring
 , data-default, deepseq, directory, ghc, ghc-paths, http-types
-, stdenv, temporary, text, vector
+, stdenv, temporary, text, vector, usePtx?false
 }:
 mkDerivation {
   pname = "gdal-plugin-hs";
@@ -11,6 +11,6 @@ mkDerivation {
     accelerate accelerate-io accelerate-llvm-native accelerate-llvm-ptx
     base bindings-gdal bytestring data-default deepseq directory ghc
     ghc-paths http-types temporary text vector
-  ];
+  ] ++ (if usePtx then [accelerate-llvm-ptx] else []);
   license = stdenv.lib.licenses.bsd3;
 }

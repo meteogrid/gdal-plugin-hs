@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -37,7 +38,9 @@ import GHC.Exts ( Constraint )
 import           Data.Array.Accelerate.Array.Sugar      (EltRepr)
 import           Data.Array.Accelerate                  as A
 import qualified Data.Array.Accelerate.LLVM.Native      as CPU
+#if HAVE_PTX
 import qualified Data.Array.Accelerate.LLVM.PTX         as PTX
+#endif
 import Data.Array.Accelerate.IO ( BlockPtrs, Vectors, fromPtr, toVectors)
 import Prelude as P
 
@@ -92,14 +95,16 @@ mapExisting liftable query = case liftFunc liftable of
     return ds
 {-# INLINE mapExisting #-}
 
-getRun1, getRun1CPU, getRun1PTX
+getRun1
   :: (MonadIO m, Arrays a, Arrays b)
   => (Acc a -> Acc b) -> m (a -> b)
-getRun1 = getRun1PTX
+getRun1 = getRun1CPU
 getRun1CPU acc = do
   target <- liftIO (CPU.createTarget [0] CPU.unbalancedParIO)
   return (CPU.run1With target acc)
+#if HAVE_PTX
 getRun1PTX = return . PTX.run1
+#endif
 
 readBandBlock'
   :: forall sh s a b. (
