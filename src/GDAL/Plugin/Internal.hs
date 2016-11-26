@@ -16,11 +16,15 @@ readBandBlock band ( i :+: j ) = liftIO $ do
   mVec <- Stm.unsafeNew (bandBlockLen band)
   void $ Stm.unsafeWith mVec $ \pBuf ->
     c_readBandBlock
-          (castPtr ((\(RasterBandH b) -> b) (unBand band)))
+          (bandPtr band)
           (fromIntegral i)
           (fromIntegral j)
-          (castPtr pBuf)
+          pBuf
   St.unsafeFreeze mVec
 
+bandPtr :: Band s a t -> Ptr band
+bandPtr = castPtr . (\(RasterBandH b) -> b) . unBand
+  
+
 foreign import ccall "GDALReadBlock" c_readBandBlock ::
-  Ptr () -> CInt -> CInt -> Ptr () -> IO CInt
+  Ptr band -> CInt -> CInt -> Ptr buffer -> IO CInt

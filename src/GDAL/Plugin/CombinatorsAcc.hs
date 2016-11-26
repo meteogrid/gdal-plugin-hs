@@ -39,6 +39,7 @@ import qualified Data.Array.Accelerate.LLVM.PTX         as PTX
 import Data.Array.Accelerate.IO ( Vectors, fromVectors, toVectors)
 import Prelude as P
 import System.IO (hPutStrLn, stderr)
+import Text.Read (readMaybe)
 
 
 type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
@@ -50,7 +51,7 @@ type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
 
 data Lifted where
   Lift1 :: Lift1Constr a b
-        => (forall s. QueryText -> GDAL s (RODataset s a))
+        => (forall s. QueryText -> GDAL s (ROBand s a))
         -> (Exp a -> Exp b)
         -> Lifted
 
@@ -63,20 +64,22 @@ class LiftableFunc f where
 instance Lift1Constr a b  => LiftableFunc (Exp a -> Exp b) where
   type LiftConstr (Exp a -> Exp b) = Lift1Constr a b
   liftFunc = Lift1 $ \query ->
-    let Just (Just path) = lookup "path" query
-    in openReadOnly (T.unpack path) (dataType (Proxy :: Proxy a))
+    let path = fromMaybe (error "Need to provide a path argument")
+             $ join (lookup "path" query)
+        bandStr = fromMaybe "1" (join (lookup "band" query))
+        band = fromMaybe (error "band must be an integer") (readMaybe (T.unpack bandStr))
+    in openReadOnly (T.unpack path) (dataType (Proxy :: Proxy a)) >>= getBand band
 
 mapExisting :: LiftableFunc f => f -> HSDatasetFactory
 mapExisting liftable query = case liftFunc liftable of
   Lift1 opener (fun :: Exp a -> Exp b) -> do
-    dsIn <- opener query :: GDAL s (RODataset s a)
-    srsIn <- datasetProjection dsIn
-    gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> datasetGeotransform dsIn
-    bandIn <- getBand 1 dsIn
+    bandIn <- opener query
+    srsIn <- bandProjection bandIn
+    gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> bandGeotransform bandIn
     bandNd <- bandNodataValue (bandAs bandIn (dataType (Proxy :: Proxy b)))
     funAcc <- getRun1 (A.map fun)
     let ds = HSDataset
-             { rasterSize   = datasetSize dsIn
+             { rasterSize   = bandSize bandIn
              , bands        = rasterBands
              , srs          = srsIn
              , geotransform = gtIn
@@ -90,6 +93,24 @@ mapExisting liftable query = case liftFunc liftable of
           ]
     return ds
 {-# INLINE mapExisting #-}
+
+
+mkReadBlock1
+  :: forall s m a b. (MonadIO m, Lift1Constr a b)
+  => (Array DIM2 a -> Array DIM2 b)
+  -> ROBand s a
+  -> BlockIx
+  -> m (St.Vector b)
+mkReadBlock1 fun band ix = do
+  vIn <- I.readBandBlock band ix :: m (St.Vector a)
+  return (toVectors . fun . fromVectors sh $ vIn)
+  where
+    nx :+: ny = bandBlockSize band
+    sh = Z :. nx :. ny
+
+
+
+
 
 getRun1, getRun1CPU
   :: (MonadIO m, Arrays a, Arrays b)
@@ -110,17 +131,3 @@ getRun1 = getRun1PTX
 #else
 getRun1 = getRun1CPU
 #endif
-
-mkReadBlock1
-  :: forall s m a b. (MonadIO m, Lift1Constr a b)
-  => (Array DIM2 a -> Array DIM2 b)
-  -> ROBand s a
-  -> BlockIx
-  -> m (St.Vector b)
-mkReadBlock1 fun band ix = do
-  vIn <- I.readBandBlock band ix :: m (St.Vector a)
-  return (toVectors . fun . fromVectors sh $ vIn)
-  where
-    nx :+: ny = bandBlockSize band
-    sh = Z :. nx :. ny
-
