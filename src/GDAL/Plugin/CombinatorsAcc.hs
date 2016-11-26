@@ -43,6 +43,7 @@ import qualified Data.Array.Accelerate.LLVM.PTX         as PTX
 #endif
 import Data.Array.Accelerate.IO ( BlockPtrs, Vectors, fromPtr, toVectors)
 import Prelude as P
+import System.IO (hPutStrLn, stderr)
 
 
 type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
@@ -95,15 +96,24 @@ mapExisting liftable query = case liftFunc liftable of
     return ds
 {-# INLINE mapExisting #-}
 
-getRun1
+getRun1, getRun1CPU
   :: (MonadIO m, Arrays a, Arrays b)
   => (Acc a -> Acc b) -> m (a -> b)
-getRun1 = getRun1CPU
 getRun1CPU acc = do
+  liftIO (hPutStrLn stderr "CPU.run1")
   target <- liftIO (CPU.createTarget [0] CPU.unbalancedParIO)
   return (CPU.run1With target acc)
+
 #if HAVE_PTX
-getRun1PTX = return . PTX.run1
+getRun1PTX
+  :: (MonadIO m, Arrays a, Arrays b)
+  => (Acc a -> Acc b) -> m (a -> b)
+getRun1PTX acc = do
+  liftIO (hPutStrLn stderr "PTX.run1")
+  return (PTX.run1 acc)
+getRun1 = getRun1PTX
+#else
+getRun1 = getRun1CPU
 #endif
 
 readBandBlock'

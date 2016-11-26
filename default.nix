@@ -1,6 +1,13 @@
 {
   gdal-plugin-hs-dso =
-    { stdenv , ghcWithPackages, cudatoolkit, gdal, llvm, extraPackages? ps: [] }:
+    { stdenv
+    , ghcWithPackages
+    , cudatoolkit
+    , gdal
+    , llvm
+    , extraPackages? ps: []
+    , usePtx? false
+    }:
     let ghc = ghcWithPackages
           (pkgs: [
             pkgs.gdal-plugin-hs
@@ -66,9 +73,9 @@
 
       src = ./dso;
 
-      buildInputs = [ gdal llvm ghc ];
+      buildInputs = [ gdal ghc ] ++ (if usePtx then [cudatoolkit] else []);
 
-      propagatedBuildInputs = [ gdal ghc cudatoolkit ];
+      propagatedBuildInputs = [ gdal ghc ] ++ (if usePtx then [cudatoolkit] else []);
 
       patchPhase = "make clean";
 
@@ -83,7 +90,6 @@
 
       shellHook = ''
         export GDAL_DRIVER_PATH="$(pwd):$GDAL_DRIVER_PATH"
-        export CUDA_PATH=${cudatoolkit}
 
         # Para que el compilador encuentre los paquetes y funcione ghc-mod
         export NIX_GHC="${ghc}/bin/ghc"
