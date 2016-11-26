@@ -42,6 +42,55 @@ import System.IO (hPutStrLn, stderr)
 import Text.Read (readMaybe)
 
 
+class LiftableFunc f where
+  type LiftConstr f :: Constraint
+  liftFunc :: f -> Lifted
+
+
+mapExisting :: LiftableFunc f => f -> HSDatasetFactory
+mapExisting liftable query = case liftFunc liftable of
+  Lift1 opener (fun :: Exp a -> Exp b) -> do
+    bandIn <- opener query
+    funAcc <- getRun1 (A.map fun)
+    bandNd <- bandNodataValue (bandAs bandIn (dataType (Proxy :: Proxy b)))
+    mkDataset bandIn [
+      HSRasterBand { blockSize = bandBlockSize bandIn
+                   , nodata = bandNd
+                   , readBlock = mkReadBlock1 funAcc bandIn
+                   }
+
+      ]
+
+  where
+    mkDataset :: Band s a t -> [HSRasterBand s] -> GDAL s (HSDataset s)
+    mkDataset protoBand rasterBands = do
+      srsIn <- bandProjection protoBand
+      gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> bandGeotransform protoBand
+      return HSDataset
+        { rasterSize   = bandSize protoBand
+        , bands        = rasterBands
+        , srs          = srsIn
+        , geotransform = gtIn
+        }
+    {-# INLINE mkDataset #-}
+
+    mkReadBlock1
+      :: forall s m a b. (MonadIO m, Lift1Constr a b)
+      => (Array DIM2 a -> Array DIM2 b)
+      -> ROBand s a
+      -> BlockIx
+      -> m (St.Vector b)
+    mkReadBlock1 fun band ix = do
+      vIn <- I.readBandBlock band ix :: m (St.Vector a)
+      return (toVectors . fun . fromVectors sh $ vIn)
+      where
+        nx :+: ny = bandBlockSize band
+        sh = Z :. nx :. ny
+    {-# INLINE mkReadBlock1 #-}
+
+{-# INLINE mapExisting #-}
+
+
 type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
                        , Elt a, Elt b
                        , Vectors (EltRepr a) ~ St.Vector a
@@ -56,11 +105,6 @@ data Lifted where
         -> Lifted
 
 
-
-class LiftableFunc f where
-  type LiftConstr f :: Constraint
-  liftFunc :: f -> Lifted
-
 instance Lift1Constr a b  => LiftableFunc (Exp a -> Exp b) where
   type LiftConstr (Exp a -> Exp b) = Lift1Constr a b
   liftFunc = Lift1 $ \query ->
@@ -69,47 +113,6 @@ instance Lift1Constr a b  => LiftableFunc (Exp a -> Exp b) where
         bandStr = fromMaybe "1" (join (lookup "band" query))
         band = fromMaybe (error "band must be an integer") (readMaybe (T.unpack bandStr))
     in openReadOnly (T.unpack path) (dataType (Proxy :: Proxy a)) >>= getBand band
-
-mapExisting :: LiftableFunc f => f -> HSDatasetFactory
-mapExisting liftable query = case liftFunc liftable of
-  Lift1 opener (fun :: Exp a -> Exp b) -> do
-    bandIn <- opener query
-    srsIn <- bandProjection bandIn
-    gtIn <- fromMaybe (Geotransform 0 1 0 0 0 1) <$> bandGeotransform bandIn
-    bandNd <- bandNodataValue (bandAs bandIn (dataType (Proxy :: Proxy b)))
-    funAcc <- getRun1 (A.map fun)
-    let ds = HSDataset
-             { rasterSize   = bandSize bandIn
-             , bands        = rasterBands
-             , srs          = srsIn
-             , geotransform = gtIn
-             }
-        rasterBands = [
-          HSRasterBand { blockSize = bandBlockSize bandIn
-                       , nodata = bandNd
-                       , readBlock = mkReadBlock1 funAcc bandIn
-                        }
-
-          ]
-    return ds
-{-# INLINE mapExisting #-}
-
-
-mkReadBlock1
-  :: forall s m a b. (MonadIO m, Lift1Constr a b)
-  => (Array DIM2 a -> Array DIM2 b)
-  -> ROBand s a
-  -> BlockIx
-  -> m (St.Vector b)
-mkReadBlock1 fun band ix = do
-  vIn <- I.readBandBlock band ix :: m (St.Vector a)
-  return (toVectors . fun . fromVectors sh $ vIn)
-  where
-    nx :+: ny = bandBlockSize band
-    sh = Z :. nx :. ny
-
-
-
 
 
 getRun1, getRun1CPU
