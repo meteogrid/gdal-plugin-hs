@@ -40,6 +40,7 @@ import Data.Array.Accelerate.IO ( Vectors, fromVectors, toVectors)
 import Prelude as P
 import System.IO (hPutStrLn, stderr)
 import Text.Read (readMaybe)
+import GHC.Conc ( numCapabilities )
 
 
 class LiftableFunc f where
@@ -54,7 +55,7 @@ mapExisting liftable query = case liftFunc liftable of
     funAcc <- getRun1 (A.map fun)
     bandNd <- bandNodataValue (bandAs bandIn (dataType (Proxy :: Proxy b)))
     mkDataset bandIn [
-      HSRasterBand { blockSize = bandBlockSize bandIn
+      HSRasterBand { blockSize = bsize
                    , nodata = bandNd
                    , readBlock = mkReadBlock1 funAcc bandIn
                    }
@@ -62,6 +63,7 @@ mapExisting liftable query = case liftFunc liftable of
       ]
 
   where
+    bsize = 256 :+: 256 :: Size
     mkDataset :: Band s a t -> [HSRasterBand s] -> GDAL s (HSDataset s)
     mkDataset protoBand rasterBands = do
       srsIn <- bandProjection protoBand
@@ -72,7 +74,6 @@ mapExisting liftable query = case liftFunc liftable of
         , srs          = srsIn
         , geotransform = gtIn
         }
-    {-# INLINE mkDataset #-}
 
     mkReadBlock1
       :: forall s m a b. (MonadIO m, Lift1Constr a b)
@@ -81,14 +82,9 @@ mapExisting liftable query = case liftFunc liftable of
       -> BlockIx
       -> m (St.Vector b)
     mkReadBlock1 fun band ix = do
-      vIn <- I.readBandBlock band ix :: m (St.Vector a)
-      return (toVectors . fun . fromVectors sh $ vIn)
-      where
-        nx :+: ny = bandBlockSize band
-        sh = Z :. nx :. ny
-    {-# INLINE mkReadBlock1 #-}
-
-{-# INLINE mapExisting #-}
+      vIn :: St.Vector a <- I.readBandBlockTranslated band bsize ix
+      let blockSh = let nx:+:ny = bsize in Z :. nx :. ny
+      return (toVectors . fun . fromVectors blockSh $ vIn)
 
 
 type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
@@ -98,9 +94,11 @@ type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
                        , Lift Exp b
                        )
 
+type Opener a = forall s. QueryText -> GDAL s (ROBand s a)
+
 data Lifted where
   Lift1 :: Lift1Constr a b
-        => (forall s. QueryText -> GDAL s (ROBand s a))
+        => Opener a
         -> (Exp a -> Exp b)
         -> Lifted
 
@@ -119,8 +117,10 @@ getRun1, getRun1CPU
   :: (MonadIO m, Arrays a, Arrays b)
   => (Acc a -> Acc b) -> m (a -> b)
 getRun1CPU acc = do
-  liftIO (hPutStrLn stderr "CPU.run1")
-  target <- liftIO (CPU.createTarget [0] CPU.unbalancedParIO)
+  liftIO (hPutStrLn stderr ("CPU.run1 " P.++ show numCapabilities))
+  target <- liftIO $ case 1 of
+    1 -> CPU.createTarget [0]      CPU.unbalancedParIO
+    n -> CPU.createTarget [0..n-1] CPU.unbalancedParIO
   return (CPU.run1With target acc)
 
 #if HAVE_PTX

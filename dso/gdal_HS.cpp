@@ -1,4 +1,5 @@
 #include "HsFFI.h"
+#include "Rts.h"
 #include "gdal_priv.h"
 #include "gdal_frmts.h"
 #include "GDALPlugin_stub.h"
@@ -22,7 +23,12 @@ void GDALRegister_HS()
   if( GDALGetDriverByName( "HS" ) != NULL )
       return;
   // TODO: allow passing RTS flags from os env maybe
-  hs_init(NULL, NULL);
+  char *argv[] = {"gdal_HS", "+RTS", "-N", "-A10M", "-H200M", "-qa", NULL};
+  char **args  = argv;
+  int argc     = sizeof(argv)/sizeof(char*) - 1;
+  RtsConfig conf = defaultRtsConfig;
+  conf.rts_opts_enabled = RtsOptsAll;
+  hs_init_ghc(&argc, &args, conf);
   hs_add_root(__stginit_GDALPlugin);
   GDALDriver *poDriver = static_cast<GDALDriver*>(hs_gdal_create_driver());
   poDriver->pfnUnloadDriver = GDALHSUnload;
