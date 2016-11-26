@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 
@@ -11,22 +10,18 @@ module GDAL.Plugin.Combinators (
 ) where
 
 import GDAL.Plugin.Types
+import GDAL.Plugin.Internal as I
 
 import GDAL
 import GDAL.Internal.GDAL
 import GDAL.Internal.HSDataset
-import Data.Int
 import qualified Data.Text as T
-import qualified Data.ByteString.Char8 as BS
 import qualified Data.Vector.Storable as St
 import Data.Maybe
 import Data.Proxy
 import Control.Monad
 import Control.DeepSeq
-import qualified Data.Vector.Storable.Mutable as Stm
 import Control.Monad.IO.Class ( liftIO )
-import Foreign.C.Types
-import Foreign.Ptr (Ptr, castPtr)
 import GHC.Exts ( inline )
 
 
@@ -62,23 +57,9 @@ mapExistingWith opener fun query = do
           HSRasterBand { blockSize = bandBlockSize bandIn
                        , nodata = bandNd
                        , readBlock = fmap (St.map (inline fun)) .
-                          readBandBlock' bandIn
+                          I.readBandBlock bandIn
                         }
 
         ]
   return ds
 {-# INLINE mapExistingWith #-}
-
-readBandBlock' band ( i :+: j ) = liftIO $ do
-  mVec <- Stm.unsafeNew (bandBlockLen band)
-  void $ Stm.unsafeWith mVec $ \pBuf ->
-    c_readBandBlock
-          (castPtr ((\(RasterBandH b) -> b) (unBand band)))
-          (fromIntegral i)
-          (fromIntegral j)
-          (castPtr pBuf)
-  St.unsafeFreeze mVec
-{-# INLINE readBandBlock' #-}
-
-foreign import ccall "GDALReadBlock" c_readBandBlock ::
-  Ptr () -> CInt -> CInt -> Ptr () -> IO CInt

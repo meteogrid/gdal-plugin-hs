@@ -15,16 +15,12 @@ module GDAL.Plugin.Compiler (
 ) where
 
 import Control.Concurrent
-import Control.Concurrent.Chan
-import Control.Concurrent.MVar
-import Control.Exception ( IOException, Handler(Handler), catches
-                         , SomeException )
+import Control.Exception ( SomeException )
 import Control.Monad (void, forever)
 import Control.Monad.IO.Class ( MonadIO (..) )
 import Data.Char (isDigit)
 import Data.Text (Text)
 import Data.String (fromString)
-import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import Data.Text.Lazy.Builder (Builder, toLazyText)
 import Data.IORef (IORef, newIORef, writeIORef, readIORef, modifyIORef)
@@ -34,12 +30,10 @@ import Data.Default (Default(..))
 import GHC hiding (importPaths)
 import GHC.Paths (libdir)
 import ErrUtils as GHC
-import HscTypes as GHC
 import Exception ( ExceptionMonad, gtry, gmask )
 import Outputable as GHC hiding (parens)
 import DynFlags as GHC
 import GHC.Exts (unsafeCoerce#)
-import System.Directory (removeDirectoryRecursive)
 
 data Compiler = Compiler
   { compilerTid       :: ThreadId
@@ -55,6 +49,7 @@ data CompilerConfig = CompilerConfig
   , cfgSafeModeOn  :: Bool
   , cfgVerbosity   :: Int
   , cfgBuildDir    :: FilePath
+  , cfgTarget      :: HscTarget
   } deriving Show
 
 instance Default CompilerConfig where
@@ -66,6 +61,7 @@ instance Default CompilerConfig where
     , cfgSafeModeOn = True 
     , cfgVerbosity  = 0
     , cfgBuildDir   = "gdal-hs-build"
+    , cfgTarget     = HscInterpreted
     }
 
 data Request where
@@ -112,17 +108,19 @@ compilerThread chan cfg = do
   logRef <- newIORef mempty
   runGhc (Just (cfgLibdir cfg)) $ do
     dflags <- getSessionDynFlags
-    let dflags' = (if False && GHC.dynamicGhc
+    let dflags' = (if not isInterpreted && GHC.dynamicGhc
                   then addOptl "-lHSrts_thr-ghc8.0.1"
                      . dynamicTooMkDynamicDynFlags
                   else id)
                 $ dflags {
                     mainFunIs   = Nothing
-                  , safeHaskell = if cfgSafeModeOn cfg then Sf_Safe else Sf_None
+                  , safeHaskell = if cfgSafeModeOn cfg
+                                  then Sf_Safe else Sf_None
                   , ghcLink     = LinkInMemory
                   , ghcMode     = CompManager
-                  , hscTarget   = HscInterpreted
-                  , ways        = ways dflags ++ [ WayThreaded ]
+                  , hscTarget   = cfgTarget cfg
+                  , ways        = ways dflags
+                                  ++ [WayThreaded | not isInterpreted]
                   , importPaths = cfgSearchPath cfg
                   , log_action  = mkLogHandler logRef
                   , verbosity   = cfgVerbosity cfg
@@ -130,6 +128,7 @@ compilerThread chan cfg = do
                   , stubDir     = Just (cfgBuildDir cfg)
                   , hiDir       = Just (cfgBuildDir cfg)
                   }
+        isInterpreted = cfgTarget cfg == HscInterpreted
     setGhcOptions dflags' (cfgOptions cfg)
     forever $ do
       req <- liftIO (readChan chan)
@@ -211,7 +210,7 @@ alterSettings f dflags = dflags { settings = f (settings dflags) }
 
 setGhcOptions :: DynFlags -> [String] -> Ghc ()
 setGhcOptions old_flags opts = do
-  (new_flags,not_parsed) <- pdf old_flags opts
+  (new_flags,_not_parsed) <- pdf old_flags opts
   void $ GHC.setSessionDynFlags (updateWays new_flags)
   where
     pdf d = fmap firstTwo . GHC.parseDynamicFlags d . map GHC.noLoc

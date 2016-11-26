@@ -18,22 +18,17 @@ module GDAL.Plugin.CombinatorsAcc (
 ) where
 
 import GDAL.Plugin.Types
+import GDAL.Plugin.Internal as I
 
 import GDAL
-import GDAL.Internal.GDAL
 import GDAL.Internal.HSDataset
-import Data.Int
 import qualified Data.Text as T
 import qualified Data.Vector.Storable as St
 import Data.Maybe
 import Data.Proxy
 import Control.Monad
 import Control.DeepSeq
-import qualified Data.Vector.Storable.Mutable as Stm
 import Control.Monad.IO.Class ( MonadIO(..) )
-import Foreign.Marshal.Array
-import Foreign.C.Types
-import Foreign.Ptr (Ptr, castPtr)
 import GHC.Exts ( Constraint )
 import           Data.Array.Accelerate.Array.Sugar      (EltRepr)
 import           Data.Array.Accelerate                  as A
@@ -41,14 +36,14 @@ import qualified Data.Array.Accelerate.LLVM.Native      as CPU
 #if HAVE_PTX
 import qualified Data.Array.Accelerate.LLVM.PTX         as PTX
 #endif
-import Data.Array.Accelerate.IO ( BlockPtrs, Vectors, fromPtr, toVectors)
+import Data.Array.Accelerate.IO ( Vectors, fromVectors, toVectors)
 import Prelude as P
 import System.IO (hPutStrLn, stderr)
 
 
 type Lift1Constr a b = ( GDALType a, GDALType b, NFData b
                        , Elt a, Elt b
-                       , BlockPtrs (EltRepr a) ~ Ptr a
+                       , Vectors (EltRepr a) ~ St.Vector a
                        , Vectors (EltRepr b) ~ St.Vector b
                        , Lift Exp b
                        )
@@ -89,7 +84,7 @@ mapExisting liftable query = case liftFunc liftable of
         rasterBands = [
           HSRasterBand { blockSize = bandBlockSize bandIn
                        , nodata = bandNd
-                       , readBlock = readBandBlock' funAcc bandIn
+                       , readBlock = mkReadBlock1 funAcc bandIn
                         }
 
           ]
@@ -116,31 +111,16 @@ getRun1 = getRun1PTX
 getRun1 = getRun1CPU
 #endif
 
-readBandBlock'
-  :: forall sh s a b. (
-        GDALType a, GDALType b, NFData b
-      , Elt a, Elt b
-      , BlockPtrs (EltRepr a) ~ Ptr a
-      , Vectors (EltRepr b) ~ St.Vector b
-      )
+mkReadBlock1
+  :: forall s m a b. (MonadIO m, Lift1Constr a b)
   => (Array DIM2 a -> Array DIM2 b)
   -> ROBand s a
   -> BlockIx
-  -> GDAL s (St.Vector b)
-readBandBlock' fun band ( i :+: j ) = liftIO $ do
-  arr <- allocaArray (bandBlockLen band) $ \(pBuf::Ptr a) -> do
-    c_readBandBlock
-      (castPtr ((\(RasterBandH b) -> b) (unBand band)))
-      (P.fromIntegral i)
-      (P.fromIntegral j)
-      (castPtr pBuf)
-    let nx :+: ny = bandBlockSize band
-    fromPtr (A.Z:.nx:.ny) pBuf
-  let result = fun arr
-      resultV = toVectors result
-  return resultV
-{-# INLINE readBandBlock' #-}
-
-foreign import ccall "GDALReadBlock" c_readBandBlock ::
-  Ptr () -> CInt -> CInt -> Ptr () -> IO CInt
+  -> m (St.Vector b)
+mkReadBlock1 fun band ix = do
+  vIn <- I.readBandBlock band ix :: m (St.Vector a)
+  return (toVectors . fun . fromVectors sh $ vIn)
+  where
+    nx :+: ny = bandBlockSize band
+    sh = Z :. nx :. ny
 
