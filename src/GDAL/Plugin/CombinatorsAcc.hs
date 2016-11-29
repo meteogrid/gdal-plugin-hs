@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -12,8 +11,9 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE RankNTypes #-}
 
+
 module GDAL.Plugin.CombinatorsAcc (
-  mapExisting
+  module GDAL.Plugin.CombinatorsAcc
 , module A
 ) where
 
@@ -48,8 +48,8 @@ class LiftableFunc f where
   liftFunc :: f -> Lifted
 
 
-mapExisting :: LiftableFunc f => f -> HSDatasetFactory
-mapExisting liftable query = case liftFunc liftable of
+mapExisting :: LiftableFunc f => f -> SomeFactory
+mapExisting liftable = SomeFactory $ \query -> case liftFunc liftable of
   Lift1 opener (fun :: Exp a -> Exp b) -> do
     bandIn <- opener query
     funAcc <- getRun1 (A.map fun)

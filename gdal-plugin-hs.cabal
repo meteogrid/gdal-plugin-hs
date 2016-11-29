@@ -27,7 +27,7 @@ library
                      , GDAL.Plugin.Combinators
                      , GDAL.Plugin.CombinatorsAcc
                      , GDAL.Plugin.Types
-  other-modules:     GDAL.Plugin.Internal
+                     , GDAL.Plugin.Internal
   build-depends:
       base >=4.9 && <4.10
     , bytestring

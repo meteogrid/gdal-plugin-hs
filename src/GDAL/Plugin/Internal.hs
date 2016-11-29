@@ -4,22 +4,22 @@ module GDAL.Plugin.Internal (
 , readBandBlockTranslated
 ) where
 
-import GDAL hiding (readBandBlock)
-import GDAL.Internal.GDAL hiding (readBandBlock)
-import GDAL.Internal.Util (fromEnumC)
+import           GDAL hiding (readBandBlock)
+import           GDAL.Internal.GDAL hiding (readBandBlock)
+import           GDAL.Internal.Util (fromEnumC)
 
 import           Control.Monad
 import           Control.Monad.IO.Class (MonadIO(liftIO))
 import           Data.Proxy (Proxy(Proxy))
-import           Foreign.Marshal.Alloc (alloca)
-import           Foreign.Storable (peek)
 import qualified Data.Vector.Storable as St
 import qualified Data.Vector.Storable.Mutable as Stm
-import           System.IO.Unsafe (unsafePerformIO)
 
-import Foreign.C.Types
-import Foreign.Ptr (Ptr, castPtr)
+import            Foreign.C.Types
+import            Foreign.Ptr (Ptr, castPtr)
 
+readBandBlock
+  :: forall a b m s t. (GDALType b, MonadIO m)
+  => Band s a t -> BlockIx -> m (St.Vector b)
 readBandBlock band ( i :+: j ) = liftIO $ do
   mVec <- Stm.unsafeNew (bandBlockLen band)
   void $ Stm.unsafeWith mVec $ \pBuf ->

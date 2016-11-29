@@ -16,7 +16,8 @@
 
         testScript = ''
           export GDAL_DRIVER_PATH="$(pwd)"
-          gdalinfo --formats | grep Haskell
+          echo "Testing that the driver is can be loaded..."
+          gdalinfo --formats | grep -q Haskell
 
           export NIX_GHC="${ghc}/bin/ghc"
           export NIX_GHCPKG="${ghc}/bin/ghc-pkg"
@@ -24,17 +25,24 @@
           export NIX_GHC_LIBDIR="${ghc}/lib/ghc-${ghc.version}"
 
           cp ${testDataset} TestDataset.hs
-          export GDAL_PLUGIN_HS_UNSAFE=YES
-          echo $GDAL_DRIVER_PATH
-          output="$(gdalinfo -stats HS:TestDataset)"
-          echo $output
-          echo $output | grep -q "Size is 2550, 1270"
-          echo $output | grep -q "Block=128x256"
-          echo $output | grep -q "Type=Float32"
-          echo $output | grep -q "WGS_1984"
-          echo $output | grep -q "NoData Value=5"
-          echo $output \
-            | grep -q "Minimum=42.000, Maximum=42.000, Mean=42.000, StdDev=0.000"
+          export GDAL_PLUGIN_HS_UNSAFE=""
+          test_the_plugin () {
+            local output="$(gdalinfo -stats HS:TestDataset 2>&1)"
+            echo $output | grep -q "Size is 2550, 1270"
+            echo $output | grep -q "Block=128x256"
+            echo $output | grep -q "Type=Float32"
+            echo $output | grep -q "WGS_1984"
+            echo $output | grep -q "NoData Value=5"
+            echo $output \
+              | grep -q "Minimum=42.000, Maximum=42.000, Mean=42.000, StdDev=0.000"
+            echo $output \
+              | grep -q "In a pattern binding: Patterns not matched: (Left _)"
+          }
+          echo "Testing interpreted plugins..."
+          test_the_plugin
+          export GDAL_PLUGIN_HS_COMPILED=""
+          echo "Testing compiled plugins..."
+          test_the_plugin
           '';
 
         testDataset = builtins.toFile "TestDataset.hs" ''

@@ -11,6 +11,8 @@ module GDAL.Plugin.Compiler (
   , startCompiler
   , stopCompiler
   , compile
+  -- * Re-exports
+  , HscTarget (..)
   , def
 ) where
 
@@ -61,7 +63,7 @@ instance Default CompilerConfig where
     , cfgSafeModeOn = True 
     , cfgVerbosity  = 0
     , cfgBuildDir   = "gdal-hs-build"
-    , cfgTarget     = HscInterpreted
+    , cfgTarget     = HscAsm
     }
 
 data Request where
