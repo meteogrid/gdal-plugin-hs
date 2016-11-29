@@ -28,6 +28,7 @@
           export GDAL_PLUGIN_HS_UNSAFE=""
           test_the_plugin () {
             local output="$(gdalinfo -stats HS:TestDataset 2>&1)"
+            echo $output
             echo $output | grep -q "Size is 2550, 1270"
             echo $output | grep -q "Block=128x256"
             echo $output | grep -q "Type=Float32"
@@ -50,11 +51,12 @@
           import GDAL
           import OSR ( srsFromEPSG )
           import GDAL.Plugin
+          import GDAL.Plugin.Types (SomeFactory(..))
           import GDAL.Internal.HSDataset
           import qualified Data.Vector.Storable as St
 
-          dataset :: HSDatasetFactory
-          dataset _ = return HSDataset
+          dataset :: SomeFactory
+          dataset = SomeFactory $ \_ -> return HSDataset
             { rasterSize   = 2550 :+: 1270
             , bands        = rasterBands
             , srs          = Just epsg4326
