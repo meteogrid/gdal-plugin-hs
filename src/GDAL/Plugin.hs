@@ -5,5 +5,5 @@ module GDAL.Plugin (
 ) where
 
 -- Must not expose SomeFactory constructor for this module to be Trustworthy!!
-import GDAL.Plugin.Types (Factory, SomeFactory, QueryText, getDataset, getFactory)
+import GDAL.Plugin.Types (Maybe, Text, HSDriverOpen, Factory, SomeFactory, QueryText, getDataset, getFactory)
 import GDAL.Plugin.Combinators

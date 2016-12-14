@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module GDAL.Plugin.Driver ( mkDriver, registerDriver ) where
 
 import           GDAL.Plugin.Types
@@ -10,16 +11,17 @@ import           GDAL.Internal.HSDriver
 
 import           Control.Monad
 import qualified Data.ByteString.Char8 as BS
-import           Data.Default
 import           Data.Maybe ( fromMaybe )
 import           Data.Monoid ((<>))
+import           Data.Proxy
+import           Data.Typeable
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import           Network.HTTP.Types.URI ( parseQueryText )
 import           System.IO (hPrint, stderr)
 
-mkDriver :: DriverName -> CompilerConfig -> IO (Driver ReadWrite)
-mkDriver name@(DriverName bsname) cfg = do
+mkDriver :: forall f. (HasFactory f, Typeable f) => Proxy f -> DriverName -> CompilerConfig -> IO (Driver ReadWrite)
+mkDriver _ name@(DriverName bsname) cfg = do
   compiler <- startCompilerWith cfg
     { cfgImports = cfgImports cfg ++ ["GDAL.Plugin"]
     }
@@ -39,8 +41,10 @@ mkDriver name@(DriverName bsname) cfg = do
            ]
 
     doOpen compile' arg = case BS.split ':' arg of
-      [bsname, modOrSrc]        -> loadMod modOrSrc []
-      [bsname, query, modOrSrc] -> loadMod modOrSrc (parseQueryText query)
+      [bsname', modOrSrc]
+        | bsname==bsname'       -> loadMod modOrSrc []
+      [bsname', query, modOrSrc]
+        | bsname==bsname'       -> loadMod modOrSrc (parseQueryText query)
       [modOrSrc]                -> loadMod modOrSrc []
       [query, modOrSrc]         -> loadMod modOrSrc (parseQueryText query)
       _                         -> return HsdError
@@ -50,11 +54,12 @@ mkDriver name@(DriverName bsname) cfg = do
                     fromMaybe modOrSrc (BS.stripSuffix ".hs" modOrSrc)
               (mSymName, query') = popArg "variable" query
               symName = maybe "dataset" T.unpack mSymName
-          eSym <- compile' [modName] ("getFactory " ++ symName)
+              code = "getFactory (" ++ symName ++ " :: " ++ show (typeOf (undefined :: f)) ++ ")"
+          eSym <- compile' [modName] code
           case eSym of
             Success factory messages -> do
               T.hPutStrLn stderr messages
-              return (HsdDataset (getDataset factory query'))
+              return (factory query')
             Failure exc messages  -> do
               hPrint stderr exc
               T.hPutStrLn stderr messages
