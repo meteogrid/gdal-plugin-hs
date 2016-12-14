@@ -15,7 +15,7 @@ hs_gdal_create_driver :: IO (Ptr ())
 hs_gdal_create_driver = do
   disableSafeMode      <- isJust <$> lookupEnv "GDAL_PLUGIN_HS_UNSAFE"
   compiled             <- isJust <$> lookupEnv "GDAL_PLUGIN_HS_COMPILED"
-  Driver (DriverH ptr) <- mkDriver (Proxy :: Proxy SomeFactory)  "HS" def
+  Driver (DriverH ptr) <- mkDriver "someFactory" "HS" def
     { cfgSafeModeOn = not disableSafeMode
     , cfgTarget     = if compiled then HscAsm else HscInterpreted
     }

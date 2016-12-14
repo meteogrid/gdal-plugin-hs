@@ -20,8 +20,8 @@ import qualified Data.Text.IO as T
 import           Network.HTTP.Types.URI ( parseQueryText )
 import           System.IO (hPrint, stderr)
 
-mkDriver :: forall f. (HasFactory f, Typeable f) => Proxy f -> DriverName -> CompilerConfig -> IO (Driver ReadWrite)
-mkDriver _ name@(DriverName bsname) cfg = do
+mkDriver :: String -> DriverName -> CompilerConfig -> IO (Driver ReadWrite)
+mkDriver ctr name@(DriverName bsname) cfg = do
   compiler <- startCompilerWith cfg
     { cfgImports = cfgImports cfg ++ ["GDAL.Plugin"]
     }
@@ -54,7 +54,7 @@ mkDriver _ name@(DriverName bsname) cfg = do
                     fromMaybe modOrSrc (BS.stripSuffix ".hs" modOrSrc)
               (mSymName, query') = popArg "variable" query
               symName = maybe "dataset" T.unpack mSymName
-              code = "getFactory (" ++ symName ++ " :: " ++ show (typeOf (undefined :: f)) ++ ")"
+              code = "getFactory (" ++ ctr ++ " " ++ symName  ++ ")"
           eSym <- compile' [modName] code
           case eSym of
             Success factory messages -> do

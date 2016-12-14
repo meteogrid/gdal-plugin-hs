@@ -2,8 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE Trustworthy #-}
 module GDAL.Plugin.Types (
-    SomeFactory (..)
+    SomeFactory
+  , someFactory
   , Factory
   , HasFactory (..)
   , QueryText
@@ -23,6 +25,9 @@ type Factory = QueryText -> HSDriverOpen
 
 class HasFactory a where
   getFactory :: a -> Factory
+
+someFactory :: (QueryText -> (forall s. GDAL s (HSDataset s))) -> SomeFactory
+someFactory = SomeFactory
 
 newtype SomeFactory = SomeFactory { getDataset :: QueryText -> (forall s. GDAL s (HSDataset s)) }
   deriving Typeable

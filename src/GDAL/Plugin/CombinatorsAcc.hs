@@ -49,7 +49,7 @@ class LiftableFunc f where
 
 
 mapExisting :: LiftableFunc f => f -> SomeFactory
-mapExisting liftable = SomeFactory $ \query -> case liftFunc liftable of
+mapExisting liftable = someFactory $ \query -> case liftFunc liftable of
   Lift1 opener (fun :: Exp a -> Exp b) -> do
     bandIn <- opener query
     funAcc <- getRun1 (A.map fun)
