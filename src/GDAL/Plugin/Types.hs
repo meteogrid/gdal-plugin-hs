@@ -7,14 +7,14 @@ module GDAL.Plugin.Types (
   , Factory
   , HasFactory (..)
   , QueryText
-  , HSDriverOpen
+  , HSDriverOpen (..)
   , Maybe
   , Text
 ) where
 
 import           GDAL (GDAL)
 import           GDAL.Internal.HSDataset (HSDataset)
-import           GDAL.Internal.HSDriver (HSDriverOpen(HsdDataset))
+import           GDAL.Internal.HSDriver (HSDriverOpen(..))
 import           Network.HTTP.Types.URI (QueryText)
 import           Data.Typeable
 import           Data.Text (Text)
