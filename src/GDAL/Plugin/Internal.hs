@@ -2,12 +2,14 @@
 module GDAL.Plugin.Internal (
   readBandBlock
 , readBandBlockTranslated
+, readBandBlockTranslatedInto
 ) where
 
 import           GDAL hiding (readBandBlock)
 import           GDAL.Internal.GDAL hiding (readBandBlock)
 import           GDAL.Internal.Util (fromEnumC)
 
+import           Control.Exception (throwIO)
 import           Control.Monad
 import           Control.Monad.IO.Class (MonadIO(liftIO))
 import           Data.Proxy (Proxy(Proxy))
@@ -35,6 +37,16 @@ readBandBlockTranslated
   => Band s a t -> Size -> BlockIx -> m (St.Vector b)
 readBandBlockTranslated srcBand destBlockSize destBlockIx = liftIO $ do
   mVec <- Stm.unsafeNew buffLen
+  readBandBlockTranslatedInto srcBand destBlockIx destBlockIx mVec
+  St.unsafeFreeze mVec
+  where
+    buffLen    = let x :+: y = destBlockSize in x*y
+
+readBandBlockTranslatedInto
+  :: forall a b m s t. (GDALType b, MonadIO m)
+  => Band s a t -> Size -> BlockIx -> Stm.IOVector b -> m ()
+readBandBlockTranslatedInto srcBand destBlockSize destBlockIx mVec = liftIO $ do
+  when (Stm.length mVec /= buffLen) (throwIO (userError "readBandBlockTranslatedInto: invalid mvector size"))
   when (winLen > 0) $ void $ Stm.unsafeWith mVec $ \pBuf ->
     c_rasterIO
       (bandPtr srcBand)
@@ -49,7 +61,6 @@ readBandBlockTranslated srcBand destBlockSize destBlockIx = liftIO $ do
       (fromEnumC dtype)
       0
       (fromIntegral (sizeOfDataType dtype * pFst destBlockSize))
-  St.unsafeFreeze mVec
   where
     dtype      = hsDataType (Proxy :: Proxy b)
     buffLen    = let x :+: y = destBlockSize in x*y
