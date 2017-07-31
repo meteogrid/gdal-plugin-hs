@@ -51,12 +51,10 @@
           import GDAL
           import OSR ( srsFromEPSG )
           import GDAL.Plugin
-          import GDAL.Plugin.Types (SomeFactory(..))
           import GDAL.Internal.HSDataset
           import qualified Data.Vector.Storable as St
 
-          dataset :: SomeFactory
-          dataset = SomeFactory $ \_ -> return HSDataset
+          dataset _ = return HSDataset
             { rasterSize   = 2550 :+: 1270
             , bands        = rasterBands
             , srs          = Just epsg4326

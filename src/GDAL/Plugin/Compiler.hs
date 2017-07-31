@@ -111,7 +111,7 @@ compilerThread chan cfg = do
   runGhc (Just (cfgLibdir cfg)) $ do
     dflags <- getSessionDynFlags
     let dflags' = (if not isInterpreted && GHC.dynamicGhc
-                  then addOptl "-lHSrts_thr-ghc8.0.1"
+                  then addOptl "-lHSrts_thr-ghc8.2.1" --FIXME: Avoid hard-code
                      . dynamicTooMkDynamicDynFlags
                   else id)
                 $ dflags {

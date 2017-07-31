@@ -1,6 +1,6 @@
 GHC = ghc
 CXX = g++
-LIBS=-lHSrts_thr-ghc8.0.1 -lCffi_thr -lrt
+LIBS=-lHSrts_thr-ghc$(shell ghc --numeric-version)  -lCffi_thr -lrt
 GDALFLAGS = $(shell gdal-config --cflags)
 CPPFLAGS  = $(GDALFLAGS)
 CFLAGS     = $(CPPFLAGS)
@@ -10,7 +10,7 @@ GHCFLAGS += -dynamic
 
 all: gdal_HS.so
 
-gdal_HS.so: GDALPlugin.hs gdal_HS.cpp
+gdal_HS.so: GDALPlugin.hs gdal_HS.cpp initRts.c
 gdal_HS.cpp: GDALPlugin_stub.h
 
 %.so:

@@ -29,7 +29,7 @@ library
                      , GDAL.Plugin.Types
                      , GDAL.Plugin.Internal
   build-depends:
-      base >=4.9 && <4.10
+      base >=4.9 && <4.11
     , bytestring
     , bindings-gdal
     , accelerate
@@ -39,7 +39,7 @@ library
     , vector
     , temporary
     , directory
-    , ghc == 8.0.1
+    , ghc
     , ghc-paths
     , text
     , data-default
